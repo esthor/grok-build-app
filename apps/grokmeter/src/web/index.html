@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en" data-theme="cyan">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GROKMETER — desktop telemetry</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <canvas id="backdrop"></canvas>
+    <div id="scanlines"></div>
+    <header id="tray">
+      <div class="tray-left">
+        <span class="wordmark">GROKMETER</span>
+        <span class="tray-sub">// DESKTOP TELEMETRY FOR GROK BUILD</span>
+      </div>
+      <div class="tray-right">
+        <span class="tray-item" id="tray-mode">MODE:—</span>
+        <span class="tray-item" id="tray-ws">LINK:—</span>
+        <button class="tray-btn" id="tray-theme" title="cycle theme [T]">THEME</button>
+        <button class="tray-btn" id="tray-edit" title="toggle edit mode [E]">LOCKED</button>
+      </div>
+    </header>
+    <main id="desktop"></main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
