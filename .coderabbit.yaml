@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit-specific adapter. Canonical repository guidance stays in
+# AGENTS.md, routed skills, schemas, tests, and tools.
+---
+inheritance: false
+early_access: true
+tone_instructions: >-
+  Be warm, precise, concrete, and evidence-led. Treat agents as capable
+  collaborators: give context and desired outcomes, preserve autonomy, and
+  flag concrete risks or boundary violations—not preferred process.
+reviews:
+  request_changes_workflow: true
+  auto_review:
+    drafts: true
+  finishing_touches:
+    docstrings:
+      enabled: false
+    simplify:
+      enabled: true
+knowledge_base:
+  code_guidelines:
+    filePatterns:
+      - "**/AGENTS.md"
