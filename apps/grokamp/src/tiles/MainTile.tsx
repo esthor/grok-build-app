@@ -3,7 +3,8 @@ import { useState, type ReactNode } from "react";
 import {
   addRandomTask,
   advance,
-  playPause,
+  pauseToggle,
+  play,
   stop,
 } from "../agent/controller";
 import { queueStore, toggleRepeat, toggleShuffle } from "../state/queue";
@@ -189,6 +190,7 @@ export function MainTile(): ReactNode {
             value={settings.throttle}
             min={0}
             max={100}
+            title="throttle — simulated tokens/sec"
             onChange={(v) => {
               updateSettings({ throttle: v });
             }}
@@ -206,6 +208,7 @@ export function MainTile(): ReactNode {
             min={-100}
             max={100}
             detent
+            title="risk appetite — paranoid to yolo"
             onChange={(v) => {
               updateSettings({ risk: v });
             }}
@@ -240,10 +243,10 @@ export function MainTile(): ReactNode {
         <SquareBtn wide title="previous task (z)" onClick={() => { advance(-1, false); }}>
           ⏮
         </SquareBtn>
-        <SquareBtn wide title="play (x)" onClick={playPause} lit={running}>
+        <SquareBtn wide title="play (x)" onClick={play} lit={running}>
           ▶
         </SquareBtn>
-        <SquareBtn wide title="pause (c)" onClick={playPause} lit={paused}>
+        <SquareBtn wide title="pause (c)" onClick={pauseToggle} lit={paused}>
           ⏸
         </SquareBtn>
         <SquareBtn wide title="stop (v)" onClick={stop}>

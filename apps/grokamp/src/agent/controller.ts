@@ -13,16 +13,29 @@ import {
   setCurrent,
 } from "../state/queue";
 import { applyPreset, settingsStore, TUNER_PRESETS } from "../state/settings";
-import { SimTransport, TICK_MS } from "./engine";
-import type { AgentEvent, PermissionDecision, TaskSpec, ToolKind } from "./protocol";
+import { SimTransport } from "./engine";
+import type {
+  AgentEvent,
+  AgentTransport,
+  PermissionDecision,
+  TaskSpec,
+  ToolKind,
+} from "./protocol";
 import { MCP_SERVER_NAMES, TOOL_TEMPLATES } from "./tasks";
 
 /**
- * The deck. One SimTransport wired into the stores; the tiles only ever call
+ * The deck. One transport wired into the stores; the tiles only ever call
  * these verbs — swap SimTransport for a real ACP client and the UI is none
- * the wiser.
+ * the wiser. Typed as the boundary interface so nothing here can lean on
+ * sim-only surface.
  */
-export const transport = new SimTransport();
+export const transport: AgentTransport = new SimTransport();
+
+/** vis tap for canvases (tiles must not touch the transport directly) */
+export function readAnalyserFrame(bands: Float32Array, scope: Float32Array): void {
+  transport.analyser.getBands(bands);
+  transport.analyser.getScope(scope);
+}
 
 const TOOL_GLYPH: Record<ToolKind, string> = {
   terminal: "$",
@@ -74,7 +87,7 @@ export function boot(): void {
       sessionStore.setState((s) => ({
         ...s,
         elapsedMs: s.elapsedMs + delta,
-        tokPerSec: transport.analyser.tokensPerSecond(TICK_MS),
+        tokPerSec: transport.analyser.tokensPerSecond(),
         progress: transport.progress(),
         status,
       }));
@@ -224,11 +237,10 @@ function onEvent(event: AgentEvent): void {
   }
 }
 
-export function playPause(): void {
+/** the ▶ button: start or resume, never pause (winamp X semantics) */
+export function play(): void {
   const status = transport.status;
   if (status === "running" || status === "blocked") {
-    transport.pause();
-    pushLog("sys", "⏸ paused");
     return;
   }
   if (status === "paused") {
@@ -244,6 +256,20 @@ export function playPause(): void {
   transport.load(task);
   patchSession({ task });
   transport.play();
+}
+
+/** the ⏸ button: pause/resume toggle, no-op when stopped (winamp C semantics) */
+export function pauseToggle(): void {
+  const status = transport.status;
+  if (status === "running" || status === "blocked") {
+    transport.pause();
+    pushLog("sys", "⏸ paused");
+    return;
+  }
+  if (status === "paused") {
+    transport.play();
+    pushLog("sys", "▶ resumed");
+  }
 }
 
 export function stop(): void {

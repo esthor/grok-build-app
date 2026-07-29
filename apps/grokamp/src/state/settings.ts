@@ -127,11 +127,21 @@ const persistSettings = debounced(() => {
 settingsStore.subscribe(persistSettings);
 
 export function allSkins(): readonly Skin[] {
-  return [...BUILTIN_SKINS, ...settingsStore.state.customSkins];
+  // customs shadow builtins on name collision, so an imported skin resolves
+  // to the same thing before and after a reload — one skin per name
+  const customs = settingsStore.state.customSkins;
+  const shadowed = BUILTIN_SKINS.filter(
+    (builtin) => !customs.some((custom) => custom.name === builtin.name),
+  );
+  return [...shadowed, ...customs];
 }
 
 export function findSkin(name: string): Skin | null {
-  return allSkins().find((s) => s.name === name) ?? null;
+  return (
+    settingsStore.state.customSkins.find((s) => s.name === name) ??
+    BUILTIN_SKINS.find((s) => s.name === name) ??
+    null
+  );
 }
 
 export function currentSkin(): Skin {

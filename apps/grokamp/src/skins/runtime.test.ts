@@ -51,14 +51,31 @@ describe("parseSkin", () => {
     expect(parseSkin(json).ok).toBe(false);
   });
 
-  test("accepts an explicit vis palette up to 24 colors", () => {
+  test("accepts an explicit vis palette of exactly 24 colors", () => {
     const json = validSkinJson();
-    json["vis"] = ["#000000", "#111111", "#ff0000"];
+    const palette = Array.from({ length: 24 }, (_, i) => `#0000${i.toString(16).padStart(2, "0")}`);
+    json["vis"] = palette;
     const result = parseSkin(json);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.skin.vis).toHaveLength(3);
+      expect(result.skin.vis).toEqual(palette);
     }
+  });
+
+  test("rejects a partial vis palette (viscolor.txt was exactly 24 lines)", () => {
+    const json = validSkinJson();
+    json["vis"] = ["#000000", "#111111", "#ff0000"];
+    const result = parseSkin(json);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("24");
+    }
+  });
+
+  test("rejects alpha hex colors (synthesis would silently drop alpha)", () => {
+    const json = validSkinJson();
+    (json["colors"] as Record<string, unknown>)["chrome"] = "#11223344";
+    expect(parseSkin(json).ok).toBe(false);
   });
 
   test("round-trips every builtin skin", () => {

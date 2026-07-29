@@ -94,10 +94,21 @@ export type AgentEvent =
 
 export type TransportStatus = "idle" | "running" | "blocked" | "paused" | "done";
 
+/** the visualizer feed every transport must supply (winamp's PCM tap) */
+export interface AgentVis {
+  /** copy current spectrum bands (0..1) into `target` */
+  getBands(target: Float32Array): void;
+  /** copy current oscilloscope samples (-1..1) into `target` */
+  getScope(target: Float32Array): void;
+  tokensPerSecond(): number;
+}
+
 /**
  * What a playable agent backend looks like to the UI. Winamp mapping:
  * load/play/pause/stop are the transport buttons, throttle is the volume
- * slider, risk is the balance slider, effort is the EQ preamp.
+ * slider, risk is the balance slider, effort is the EQ preamp. Everything
+ * the tiles consume is on this boundary — a real grok-build ACP adapter
+ * must be a drop-in replacement for the demo SimTransport.
  */
 export interface AgentTransport {
   load(task: TaskSpec): void;
@@ -112,5 +123,8 @@ export interface AgentTransport {
   /** 0..1 — reasoning effort; more thinking, more tokens */
   setEffort(value: number): void;
   subscribe(listener: (event: AgentEvent) => void): () => void;
+  /** 0..1 — estimated progress through the loaded task (the posbar) */
+  progress(): number;
+  readonly analyser: AgentVis;
   readonly status: TransportStatus;
 }

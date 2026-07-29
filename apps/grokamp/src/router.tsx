@@ -7,7 +7,6 @@ import {
 } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
 import { App } from "./App";
-import { debounced } from "./state/persist";
 import { findSkin, setSkin, settingsStore, updateSettings } from "./state/settings";
 import { setWindowOpen, WIN_IDS, windowsStore, type WinId } from "./state/windows";
 
@@ -31,11 +30,14 @@ function validateSearch(search: Record<string, unknown>): AppSearch {
   if (typeof search["skin"] === "string" && search["skin"].length > 0) {
     out.skin = search["skin"];
   }
-  if (search["x2"] === true || search["x2"] === "1" || search["x2"] === 1) {
-    out.x2 = true;
+  // explicit off states must survive the round-trip, or shared layouts
+  // silently inherit the recipient's persisted state
+  const x2 = search["x2"];
+  if (x2 !== undefined) {
+    out.x2 = x2 === true || x2 === "1" || x2 === 1 || x2 === "true";
   }
-  if (typeof search["wins"] === "string" && search["wins"].length > 0) {
-    out.wins = search["wins"];
+  if (typeof search["wins"] === "string") {
+    out.wins = search["wins"]; // empty string = "close everything", still authoritative
   }
   return out;
 }
@@ -53,7 +55,7 @@ function AppShell(): ReactNode {
       updateSettings({ doubleSize: search.x2 });
     }
     if (search.wins !== undefined) {
-      const open = new Set(search.wins.split(","));
+      const open = new Set(search.wins.split(",").filter((id) => id.length > 0));
       for (const id of WIN_IDS) {
         setWindowOpen(id, open.has(id));
       }
@@ -61,22 +63,32 @@ function AppShell(): ReactNode {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- boot-time only
   }, []);
 
-  // reflect state back into the URL, debounced
+  // reflect state back into the URL, debounced with a cancellable handle so
+  // a store change in the last half second can't navigate after unmount
   useEffect(() => {
-    const reflect = debounced(() => {
-      const settings = settingsStore.state;
-      const wins = WIN_IDS.filter((id: WinId) => windowsStore.state.wins[id].open).join(",");
-      const next: { skin?: string; x2?: boolean; wins?: string } = {};
-      next.skin = settings.skinName;
-      if (settings.doubleSize) {
-        next.x2 = true;
+    let handle: ReturnType<typeof setTimeout> | null = null;
+    const reflect = (): void => {
+      if (handle !== null) {
+        clearTimeout(handle);
       }
-      next.wins = wins;
-      void navigate({ to: "/", search: next, replace: true });
-    }, 500);
+      handle = setTimeout(() => {
+        const settings = settingsStore.state;
+        const wins = WIN_IDS.filter((id: WinId) => windowsStore.state.wins[id].open).join(",");
+        // x2 is always written so a shared URL can say "off" explicitly
+        const next: { skin: string; x2: boolean; wins: string } = {
+          skin: settings.skinName,
+          x2: settings.doubleSize,
+          wins,
+        };
+        void navigate({ to: "/", search: next, replace: true });
+      }, 500);
+    };
     const subSettings = settingsStore.subscribe(reflect);
     const subWindows = windowsStore.subscribe(reflect);
     return () => {
+      if (handle !== null) {
+        clearTimeout(handle);
+      }
       subSettings.unsubscribe();
       subWindows.unsubscribe();
     };

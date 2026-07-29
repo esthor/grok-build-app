@@ -43,9 +43,11 @@ export interface SkinColors {
 }
 
 /**
- * viscolor.txt lives on: up to 24 colors.
+ * viscolor.txt lives on: exactly 24 colors.
  * [0] vis background, [1] grid dots, [2..17] spectrum ramp top->bottom,
  * [18..22] oscilloscope shades, [23] peak caps.
+ * Builtins and buildVis always produce all 24; imported skins may omit the
+ * field entirely (a palette is synthesized) but may not ship a partial one.
  */
 export type VisPalette = readonly string[];
 

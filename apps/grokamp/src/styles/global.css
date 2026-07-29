@@ -438,11 +438,14 @@ html[data-scanlines="on"] .lcd::after {
 
 /* ------------------------------------------------ main tile */
 
+/* the main deck: clutterbar rail + a column of lcd / midrow / posbar / transport */
 .main-tile {
   flex: 1;
   min-height: 0;
-  display: flex;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  grid-template-rows: 96px 34px 18px 1fr;
+  gap: 4px 6px;
 }
 
 .clutterbar {
@@ -473,28 +476,6 @@ html[data-scanlines="on"] .lcd::after {
 .clutterbar button[data-lit="yes"] {
   color: var(--sk-lcdAccent);
   text-shadow: 0 0 5px var(--sk-lcdAccent);
-}
-
-.main-right,
-.main-tile > :nth-child(2) {
-  flex: 1;
-  min-width: 0;
-}
-
-.main-tile {
-  flex-direction: row;
-}
-
-.main-tile > .main-lcd {
-  flex: 0 0 auto;
-}
-
-/* the main column stacks lcd / midrow / posbar / transport */
-.main-tile {
-  display: grid;
-  grid-template-columns: 18px 1fr;
-  grid-template-rows: 96px 34px 18px 1fr;
-  gap: 4px 6px;
 }
 
 .main-tile > .clutterbar {

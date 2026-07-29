@@ -55,7 +55,7 @@ Open the **LAB** window (button on the main deck, or `Alt+8`):
     "err":          "#ff4136",
     "ledOff":       "#1a2032"
   },
-  "vis": ["#04020a", "#141020", "..."],  // optional, up to 24 (see below)
+  "vis": ["#04020a", "#141020", "..."],  // optional; exactly 24 if present
   "scanlines": true,                      // optional CRT overlay on LCDs
   "radius": 0                             // window corners, px (0 = 1997)
 }
@@ -73,13 +73,16 @@ Open the **LAB** window (button on the main deck, or `Alt+8`):
 
 Omit `vis` entirely and Grokamp synthesizes one from your LCD colors — the
 same "missing file falls back" contract that made partial Winamp skins valid.
+If you do ship one, ship all 24 slots: `viscolor.txt` was exactly 24 lines,
+and so are we.
 
 ### Validation
 
 Imports run through a strict parser
 ([`src/skins/runtime.ts`](../src/skins/runtime.ts) — `parseSkin`): every
-color must be `#rgb`/`#rrggbb`/`#rrggbbaa`, `radius` 0–16, `vis` ≤ 24 hex
-entries. Rejections land in the Terminal with the reason. Skins are **data,
+color must be opaque `#rgb`/`#rrggbb` (no alpha), `radius` 0–16, `vis`
+exactly 24 hex entries or absent. Rejections land in the Terminal with the
+reason. Skins are **data,
 never code** — nothing in a skin file can execute.
 
 ### Where skins live

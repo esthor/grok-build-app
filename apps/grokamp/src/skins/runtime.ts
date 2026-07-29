@@ -1,7 +1,8 @@
 import { buildVis } from "./ramp";
 import { SKIN_COLOR_KEYS, type Skin, type SkinColors } from "./types";
 
-const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+// opaque colors only: alpha would be silently dropped by palette synthesis
+const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 /** paint a skin onto the document as CSS custom properties */
 export function applySkin(skin: Skin): void {
@@ -56,8 +57,10 @@ export function parseSkin(input: unknown): SkinParseResult {
   let vis: readonly string[] | null = null;
   const rawVis = input["vis"];
   if (rawVis !== undefined) {
-    if (!Array.isArray(rawVis) || rawVis.length > 24 || !rawVis.every(isHexColor)) {
-      return { ok: false, error: '"vis" must be up to 24 hex colors' };
+    // viscolor.txt was exactly 24 lines; partial palettes would leave
+    // renderer slots meaningless, so an explicit palette must be complete
+    if (!Array.isArray(rawVis) || rawVis.length !== 24 || !rawVis.every(isHexColor)) {
+      return { ok: false, error: '"vis" must be exactly 24 hex colors (or omitted)' };
     }
     vis = rawVis;
   }

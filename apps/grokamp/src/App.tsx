@@ -1,6 +1,13 @@
 import { useStore } from "@tanstack/react-store";
 import { useEffect, useState, type ReactNode } from "react";
-import { addRandomTask, advance, playPause, stop, whipTheLlama } from "./agent/controller";
+import {
+  addRandomTask,
+  advance,
+  pauseToggle,
+  play,
+  stop,
+  whipTheLlama,
+} from "./agent/controller";
 import { toggleRepeat, toggleShuffle } from "./state/queue";
 import { settingsStore, updateSettings } from "./state/settings";
 import { toggleWindow, WIN_IDS } from "./state/windows";
@@ -91,8 +98,10 @@ export function App(): ReactNode {
           advance(-1, false);
           break;
         case "x":
+          play();
+          break;
         case "c":
-          playPause();
+          pauseToggle();
           break;
         case "v":
           stop();

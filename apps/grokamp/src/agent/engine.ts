@@ -70,7 +70,7 @@ function buildScript(task: TaskSpec, rand: () => number): Beat[] {
  * block the run, like a real harness), and feeds the analyser.
  */
 export class SimTransport implements AgentTransport {
-  readonly analyser = new VisAnalyser();
+  readonly analyser = new VisAnalyser(TICK_MS);
 
   private listeners = new Set<(event: AgentEvent) => void>();
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -229,7 +229,7 @@ export class SimTransport implements AgentTransport {
   }
 
   private tick(): void {
-    this.analyser.tick(TICK_MS);
+    this.analyser.tick();
     if (this.statusValue === "blocked") {
       // parked on a permission prompt: nervous high-end flicker
       if (this.rand() < 0.3) {

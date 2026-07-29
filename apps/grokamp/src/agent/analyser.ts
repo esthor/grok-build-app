@@ -10,9 +10,14 @@ export const SCOPE_LENGTH = 152;
 export class VisAnalyser {
   private readonly bands = new Float32Array(BAND_COUNT);
   private readonly scope = new Float32Array(SCOPE_LENGTH);
+  private readonly tickMs: number;
   private phase = 0;
   private tokenWindow: number[] = [];
   private windowTokens = 0;
+
+  constructor(tickMs = 100) {
+    this.tickMs = tickMs;
+  }
 
   /** region: 0 bass .. 1 highs; amount 0..1 */
   pushEnergy(region: number, amount: number): void {
@@ -29,15 +34,15 @@ export class VisAnalyser {
     this.windowTokens += count;
   }
 
-  /** advance one engine tick; tickMs used to derive tokens/sec */
-  tick(tickMs: number): void {
+  /** advance one engine tick */
+  tick(): void {
     for (let i = 0; i < BAND_COUNT; i++) {
       const decay = 0.82 - (i / BAND_COUNT) * 0.1; // highs die faster
       this.bands[i] = (this.bands[i] ?? 0) * decay;
     }
     this.tokenWindow.push(this.windowTokens);
     this.windowTokens = 0;
-    if (this.tokenWindow.length > Math.max(1, Math.round(2000 / tickMs))) {
+    if (this.tokenWindow.length > Math.max(1, Math.round(2000 / this.tickMs))) {
       this.tokenWindow.shift();
     }
 
@@ -64,7 +69,7 @@ export class VisAnalyser {
     target.set(this.scope.subarray(0, Math.min(SCOPE_LENGTH, target.length)));
   }
 
-  tokensPerSecond(tickMs: number): number {
+  tokensPerSecond(): number {
     if (this.tokenWindow.length === 0) {
       return 0;
     }
@@ -72,7 +77,7 @@ export class VisAnalyser {
     for (const n of this.tokenWindow) {
       sum += n;
     }
-    return (sum / this.tokenWindow.length) * (1000 / tickMs);
+    return (sum / this.tokenWindow.length) * (1000 / this.tickMs);
   }
 
   reset(): void {

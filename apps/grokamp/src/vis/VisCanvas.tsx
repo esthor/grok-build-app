@@ -1,6 +1,6 @@
 import { useStore } from "@tanstack/react-store";
 import { useEffect, useRef, type ReactNode } from "react";
-import { transport } from "../agent/controller";
+import { readAnalyserFrame } from "../agent/controller";
 import { sessionStore } from "../state/session";
 import { currentSkin, settingsStore, updateSettings, type VisMode } from "../state/settings";
 import type { VisPalette } from "../skins/types";
@@ -66,8 +66,7 @@ export function VisCanvas({
     const state = createVisState();
     let raf = 0;
     const frame = (): void => {
-      transport.analyser.getBands(state.bands);
-      transport.analyser.getScope(state.scope);
+      readAnalyserFrame(state.bands, state.scope);
       const llama = Date.now() < llamaUntil;
       const palette = llama ? rainbowPalette() : currentSkin().vis;
       const w = canvas.width;

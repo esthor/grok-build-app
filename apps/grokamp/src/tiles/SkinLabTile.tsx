@@ -108,6 +108,9 @@ export function SkinLabTile(): ReactNode {
   const skinName = useStore(settingsStore, (s) => s.skinName);
   const customCount = useStore(settingsStore, (s) => s.customSkins.length);
   const [draft, setDraft] = useState<Skin>(() => currentSkin());
+  // an imported/authored vis palette is data we must not clobber; only
+  // re-synthesize it after the user actually repaints colors
+  const [colorsDirty, setColorsDirty] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const applyDraft = (): void => {
@@ -116,15 +119,18 @@ export function SkinLabTile(): ReactNode {
     const skin: Skin = {
       ...draft,
       name,
-      vis: buildVis({
-        bg: draft.colors.lcdBg,
-        grid: lerpHex(draft.colors.lcdBg, draft.colors.lcdDim, 0.3),
-        spectrum: [draft.colors.lcdAccent, draft.colors.lcdText, draft.colors.lcdDim],
-        scope: [draft.colors.lcdText, draft.colors.lcdDim, draft.colors.lcdDim],
-        peak: draft.colors.lcdAccent,
-      }),
+      vis: colorsDirty
+        ? buildVis({
+            bg: draft.colors.lcdBg,
+            grid: lerpHex(draft.colors.lcdBg, draft.colors.lcdDim, 0.3),
+            spectrum: [draft.colors.lcdAccent, draft.colors.lcdText, draft.colors.lcdDim],
+            scope: [draft.colors.lcdText, draft.colors.lcdDim, draft.colors.lcdDim],
+            peak: draft.colors.lcdAccent,
+          })
+        : draft.vis,
     };
     setDraft(skin);
+    setColorsDirty(false);
     upsertCustomSkin(skin);
     pushLog("sys", `skin applied: ${skin.name}`);
   };
@@ -146,6 +152,7 @@ export function SkinLabTile(): ReactNode {
       const result = parseSkin(parsed);
       if (result.ok) {
         setDraft(result.skin);
+        setColorsDirty(false);
         upsertCustomSkin(result.skin);
         pushLog("sys", `skin imported: ${result.skin.name}`, "ok");
       } else {
@@ -166,6 +173,7 @@ export function SkinLabTile(): ReactNode {
           onChange={(e) => {
             setSkin(e.target.value);
             setDraft(currentSkin());
+            setColorsDirty(false);
           }}
         >
           {allSkins().map((s) => (
@@ -192,6 +200,7 @@ export function SkinLabTile(): ReactNode {
               value={draft.colors[key]}
               onChange={(e) => {
                 const value = e.target.value;
+                setColorsDirty(true);
                 setDraft((d) => ({ ...d, colors: { ...d.colors, [key]: value } }));
               }}
             />
@@ -220,6 +229,7 @@ export function SkinLabTile(): ReactNode {
           onClick={() => {
             const skin = randomSkin();
             setDraft(skin);
+            setColorsDirty(false);
             upsertCustomSkin(skin);
           }}
         >
