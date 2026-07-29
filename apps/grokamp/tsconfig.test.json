@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // tests run under bun, not vite. bun-types and vite/client both declare
+    // import.meta and clash; and bun-types itself does not pass a
+    // skipLibCheck:false pass (TS2309 in extensions.d.ts). The app tsconfig
+    // keeps skipLibCheck:false; tests concede it for the runtime's own types.
+    "types": ["bun"],
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.test.ts", "src/**/*.test.tsx"],
+  "exclude": []
+}

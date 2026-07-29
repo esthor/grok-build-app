@@ -1,0 +1,32 @@
+{
+  "name": "grokamp",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A Winamp-inspired desktop UI for Grok Build. It really whips the token stream.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "bun run typecheck && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "bun test",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.101.4",
+    "@tanstack/react-router": "^1.170.18",
+    "@tanstack/react-store": "^0.11.0",
+    "@tanstack/react-virtual": "^3.14.9",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "@types/bun": "^1.3.14",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5"
+  }
+}
