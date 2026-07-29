@@ -26,6 +26,9 @@ type Emit = {
 
 const grokHome = (): string => process.env["GROK_HOME"] ?? join(homedir(), ".grok");
 
+/** Session ids are UUIDs; anything else must not reach a path join. */
+const SESSION_ID_RE = /^[0-9a-fA-F-]{8,64}$/;
+
 // ── Byte-offset line tail with torn-line tolerance ───────────────────────
 
 class Tail {
@@ -107,6 +110,9 @@ class SessionWatch {
   permsDenied = 0;
   permWaitTotal = 0;
   permPending = false;
+  /** Live context occupancy: latest totalTokens observed on the stream. */
+  contextUsedTokens = 0;
+  /** Session high-water token mark (the odometer). */
   totalTokens = 0;
   ttft: number[] = [];
   turnStartedAt = 0;
@@ -166,6 +172,11 @@ class SessionWatch {
       this.itlP50 = num(signals["itlP50Ms"], this.itlP50);
       this.itlP99 = num(signals["itlP99Ms"], this.itlP99);
       this.errorCount = Math.max(this.errorCount, num(signals["errorCount"], 0));
+      // signals.json can lag far behind the live stream, so it only seeds
+      // the counters before the first updates.jsonl observation.
+      if (this.contextUsedTokens === 0) {
+        this.contextUsedTokens = num(signals["contextTokensUsed"], 0);
+      }
       if (this.totalTokens === 0) this.totalTokens = num(signals["contextTokensUsed"], 0);
     }
   }
@@ -190,6 +201,7 @@ class SessionWatch {
       case "first_token": {
         if (this.turnStartedAt > 0) {
           this.ttft.push(at - this.turnStartedAt);
+          if (this.ttft.length > 200) this.ttft.shift();
           this.turnStartedAt = 0;
         }
         break;
@@ -262,8 +274,13 @@ class SessionWatch {
     const kind = str(update["sessionUpdate"]);
 
     if (meta !== null) {
-      const tokens = num(meta["totalTokens"], 0);
-      if (tokens > this.totalTokens) this.totalTokens = tokens;
+      const tokens = num(meta["totalTokens"], -1);
+      if (tokens >= 0) {
+        // Context occupancy tracks the stream (down too, e.g. compaction);
+        // the odometer only ratchets up.
+        this.contextUsedTokens = tokens;
+        if (tokens > this.totalTokens) this.totalTokens = tokens;
+      }
     }
 
     switch (kind) {
@@ -334,6 +351,8 @@ class SessionWatch {
     }
     const toolCallCount = Object.values(this.tools).reduce((a, t) => a + t.count, 0);
     const ttftAvg = this.ttft.length > 0 ? this.ttft.reduce((a, b) => a + b, 0) / this.ttft.length : 0;
+    const ttftMin = this.ttft.reduce((a, b) => Math.min(a, b), this.ttft[0] ?? 0);
+    const ttftMax = this.ttft.reduce((a, b) => Math.max(a, b), 0);
     return {
       id: this.id,
       title: this.title,
@@ -354,12 +373,12 @@ class SessionWatch {
       errorCount: this.errorCount,
       compactionCount: this.compactionCount,
       durationSec: Math.max(0, Math.floor((Date.now() - this.createdAt) / 1000)),
-      contextUsedTokens: this.totalTokens,
+      contextUsedTokens: this.contextUsedTokens,
       contextWindowTokens: this.contextWindowTokens,
       totalTokens: this.totalTokens,
       ttftAvgMs: ttftAvg,
-      ttftMinMs: this.ttft.length > 0 ? Math.min(...this.ttft) : 0,
-      ttftMaxMs: this.ttft.length > 0 ? Math.max(...this.ttft) : 0,
+      ttftMinMs: ttftMin,
+      ttftMaxMs: ttftMax,
       itlP50Ms: this.itlP50,
       itlP99Ms: this.itlP99,
       linesAdded,
@@ -402,7 +421,7 @@ async function readActiveSessions(): Promise<ActiveEntry[]> {
       const o = item as JObj;
       const sessionId = str(o["session_id"]);
       const cwd = str(o["cwd"]);
-      if (sessionId === "" || cwd === "") continue;
+      if (!SESSION_ID_RE.test(sessionId) || cwd === "") continue;
       out.push({ sessionId, pid: num(o["pid"]), cwd });
     }
     return out;
@@ -422,6 +441,7 @@ function pidAlive(pid: number): boolean {
 }
 
 async function findSessionDir(cwd: string, sessionId: string): Promise<string | null> {
+  if (!SESSION_ID_RE.test(sessionId)) return null;
   const root = join(grokHome(), "sessions");
   const direct = join(root, encodeURIComponent(cwd), sessionId);
   try {
@@ -479,6 +499,7 @@ async function findRecentSession(): Promise<{ dir: string; id: string; cwd: stri
       continue;
     }
     for (const id of ids) {
+      if (!SESSION_ID_RE.test(id)) continue;
       const dir = join(base, id);
       try {
         const s = await stat(join(dir, "summary.json"));
@@ -559,24 +580,39 @@ export function startGrok(emit: Emit): void {
       watchLive = target.live;
     }
   };
-  void discover();
-  setInterval(() => void discover(), 2000);
+  // Both loop bodies are async on fixed timers: an in-flight latch keeps a
+  // slow poll from re-entering Tail.poll and double-folding a byte range.
+  let discovering = false;
+  const discoverOnce = (): void => {
+    if (discovering) return;
+    discovering = true;
+    void discover().finally(() => {
+      discovering = false;
+    });
+  };
+  discoverOnce();
+  setInterval(discoverOnce, 2000);
 
   // Tail + snapshot loop.
+  let tailing = false;
   setInterval(() => {
     const w = watch;
-    if (w === null) return;
+    if (w === null || tailing) return;
+    tailing = true;
     void (async () => {
       const fresh: FeedItem[] = [];
       await w.updates.poll((line) => w.foldUpdate(line, fresh));
       await w.events.poll((line) => w.foldEvent(line, fresh));
       await w.hunks.poll((line) => w.foldHunk(line));
+      if (watch !== w) return; // session switched mid-poll; drop stale output
       if (fresh.length > 0) {
         fresh.sort((a, b) => a.at - b.at);
         emit.feed(fresh);
       }
       emit.agent(w.snapshot(watchLive));
-    })();
+    })().finally(() => {
+      tailing = false;
+    });
   }, 900);
 
   // Meta refresh (summary/signals are small atomic files).

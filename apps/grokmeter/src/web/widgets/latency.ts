@@ -13,12 +13,12 @@ export const latencyWidget: WidgetDef = {
     const grid = el("div", "stat-grid");
     body.append(grid);
 
-    const mk = (label: string): HTMLElement => {
+    const mk = (label: string, unit = "ms"): HTMLElement => {
       const cell = el("div", "stat-cell");
       const l = el("span", "micro", label);
       const v = el("span", "val", "—");
-      const u = el("span", "unit", "ms");
-      cell.append(l, v, u);
+      cell.append(l, v);
+      if (unit !== "") cell.append(el("span", "unit", unit));
       grid.append(cell);
       return v;
     };
@@ -28,7 +28,7 @@ export const latencyWidget: WidgetDef = {
     const ttftMax = mk("TTFT MAX");
     const itlP50 = mk("ITL P50");
     const itlP99 = mk("ITL P99");
-    const turns = mk("TURNS");
+    const turns = mk("TURNS", "");
 
     store.on("agent", (agent) => {
       if (agent === null) {
@@ -41,8 +41,6 @@ export const latencyWidget: WidgetDef = {
       itlP50.textContent = Math.round(agent.itlP50Ms).toString();
       itlP99.textContent = Math.round(agent.itlP99Ms).toString();
       turns.textContent = agent.turnCount.toString();
-      const turnsUnit = turns.nextElementSibling;
-      if (turnsUnit !== null) turnsUnit.textContent = "";
       setStatus(agent.ttftAvgMs > 8000 ? "warn" : "ok");
     });
     return undefined;

@@ -6,7 +6,7 @@ control for your coding agent, styled like the future we were promised in
 2003. Runs on Bun with zero runtime dependencies and the strictest tsconfig
 TypeScript will let you write.
 
-```
+```sh
 cd apps/grokmeter
 bun install        # dev-time typecheck deps only (typescript, @types/bun)
 bun run dev        # live deck  → tails your real ~/.grok sessions
@@ -76,7 +76,7 @@ No cooperation from the `grok` process required — the deck tails what the
 harness already writes under `~/.grok` (append-only JSONL + atomically
 replaced state files):
 
-```
+```text
 active_sessions.json            which sessions are alive (pid, cwd)
 sessions/<cwd>/<id>/
   summary.json                  title, model, git head, timestamps

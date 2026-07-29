@@ -17,9 +17,23 @@ import {
 } from "./shared/protocol.ts";
 
 const PORT = Number(process.env["PORT"] ?? 4517);
+// The deck streams sensitive telemetry (prompts, cwd, process list), so it
+// binds to loopback unless explicitly overridden.
+const HOST = process.env["GROKMETER_HOST"] ?? "127.0.0.1";
 const DEMO = process.env["GROKMETER_DEMO"] === "1";
 const TOPIC = "wire";
 const FEED_BUFFER = 250;
+
+/** WebSockets ignore the same-origin policy; only our own pages may attach. */
+function allowedOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin);
+    if (url.port !== String(PORT)) return false;
+    return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === HOST;
+  } catch {
+    return false;
+  }
+}
 
 const info: ServerInfo = {
   name: "grokmeter",
@@ -36,6 +50,7 @@ const feedRing: FeedItem[] = [];
 
 const server = Bun.serve({
   port: PORT,
+  hostname: HOST,
   development: process.env["NODE_ENV"] !== "production" && { hmr: false },
   routes: {
     "/": index,
@@ -43,6 +58,10 @@ const server = Bun.serve({
   fetch(req, srv) {
     const url = new URL(req.url);
     if (url.pathname === "/ws") {
+      const origin = req.headers.get("origin");
+      if (origin !== null && !allowedOrigin(origin)) {
+        return new Response("forbidden origin", { status: 403 });
+      }
       if (srv.upgrade(req)) return undefined;
       return new Response("websocket upgrade required", { status: 426 });
     }

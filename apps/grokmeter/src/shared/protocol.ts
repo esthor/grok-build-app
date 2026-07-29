@@ -162,12 +162,37 @@ export function encodeWire(msg: Wire): string {
   return JSON.stringify(msg);
 }
 
+function isObj(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/**
+ * Validate a frame's discriminator and the shape of its payload slot before
+ * trusting it. Field-level validation stays with the consumers (widgets
+ * already treat numerics defensively); this boundary guarantees the payload
+ * key exists with the right container type so `msg.sys`-style access can't
+ * explode on a malformed frame.
+ */
 export function decodeWire(raw: string): Wire | null {
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null) return null;
-    if (!("t" in parsed) || typeof (parsed as { t: unknown }).t !== "string") return null;
-    return parsed as Wire;
+    if (!isObj(parsed)) return null;
+    switch (parsed["t"]) {
+      case "hello":
+        return isObj(parsed["server"]) ? (parsed as Wire) : null;
+      case "sys":
+        return isObj(parsed["sys"]) ? (parsed as Wire) : null;
+      case "agent":
+        return isObj(parsed["agent"]) || parsed["agent"] === null ? (parsed as Wire) : null;
+      case "media":
+        return isObj(parsed["media"]) || parsed["media"] === null ? (parsed as Wire) : null;
+      case "feed":
+        return Array.isArray(parsed["items"]) && parsed["items"].every(isObj)
+          ? (parsed as Wire)
+          : null;
+      default:
+        return null;
+    }
   } catch {
     return null;
   }

@@ -28,6 +28,13 @@ export const diskWidget: WidgetDef = {
     body.append(track, row, row2);
 
     store.on("sys", (sys) => {
+      if (sys.disk.totalBytes <= 0) {
+        fill.style.width = "0%";
+        v.textContent = "—";
+        v2.textContent = "—";
+        setStatus("");
+        return;
+      }
       const frac = sys.disk.usedBytes / sys.disk.totalBytes;
       fill.style.width = `${(frac * 100).toFixed(1)}%`;
       fill.className = frac > 0.92 ? "bar-fill bad" : frac > 0.8 ? "bar-fill warn" : "bar-fill";

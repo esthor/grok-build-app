@@ -8,15 +8,34 @@ import type { SysStats } from "../shared/protocol.ts";
 
 type Emit = { sys: (sys: SysStats) => void };
 
-async function run(cmd: string[]): Promise<string> {
+async function run(cmd: string[], timeoutMs = 5000): Promise<string> {
   try {
     const proc = Bun.spawn(cmd, { stdout: "pipe", stderr: "ignore" });
-    const out = await proc.stdout.text();
-    await proc.exited;
-    return out;
+    const timer = setTimeout(() => proc.kill(), timeoutMs);
+    try {
+      const out = await proc.stdout.text();
+      await proc.exited;
+      return out;
+    } finally {
+      clearTimeout(timer);
+    }
   } catch {
     return "";
   }
+}
+
+/** Interval helper that drops a tick instead of overlapping a slow sample. */
+function every(ms: number, sample: () => Promise<void>): void {
+  let busy = false;
+  const tick = (): void => {
+    if (busy) return;
+    busy = true;
+    void sample().finally(() => {
+      busy = false;
+    });
+  };
+  tick();
+  setInterval(tick, ms);
 }
 
 export function startSystem(emit: Emit): void {
@@ -36,6 +55,7 @@ export function startSystem(emit: Emit): void {
     rxBps: 0,
     txBps: 0,
     netAt: 0,
+    diskPath: "/",
     diskUsed: 0,
     diskTotal: 0,
     procs: [] as SysStats["procs"],
@@ -93,8 +113,7 @@ export function startSystem(emit: Emit): void {
     state.memWired = wired * pageSize;
     state.memCompressed = compressed * pageSize;
   };
-  void sampleMem();
-  setInterval(() => void sampleMem(), 2000);
+  every(2000, sampleMem);
 
   // ── Network every 1s (delta of interface byte counters) ───────────────
   const sampleNet = async (): Promise<void> => {
@@ -121,8 +140,7 @@ export function startSystem(emit: Emit): void {
     state.txTotal = tx;
     state.netAt = now;
   };
-  void sampleNet();
-  setInterval(() => void sampleNet(), 1000);
+  every(1000, sampleNet);
 
   // ── Disk every 30s ─────────────────────────────────────────────────────
   const sampleDisk = async (): Promise<void> => {
@@ -136,14 +154,14 @@ export function startSystem(emit: Emit): void {
       const totalK = Number(cols[1] ?? "0");
       const usedK = Number(cols[2] ?? "0");
       if (totalK > 0) {
+        state.diskPath = vol;
         state.diskTotal = totalK * 1024;
         state.diskUsed = usedK * 1024;
         return;
       }
     }
   };
-  void sampleDisk();
-  setInterval(() => void sampleDisk(), 30_000);
+  every(30_000, sampleDisk);
 
   // ── Processes every 2s ─────────────────────────────────────────────────
   const sampleProcs = async (): Promise<void> => {
@@ -164,8 +182,7 @@ export function startSystem(emit: Emit): void {
     }
     if (procs.length > 0) state.procs = procs.slice(0, 6);
   };
-  void sampleProcs();
-  setInterval(() => void sampleProcs(), 2000);
+  every(2000, sampleProcs);
 
   // ── Broadcast merged snapshot at 1s ────────────────────────────────────
   setInterval(() => {
@@ -194,7 +211,7 @@ export function startSystem(emit: Emit): void {
         rxTotal: state.rxTotal,
         txTotal: state.txTotal,
       },
-      disk: { path: "/", usedBytes: state.diskUsed, totalBytes: state.diskTotal },
+      disk: { path: state.diskPath, usedBytes: state.diskUsed, totalBytes: state.diskTotal },
       procs: state.procs,
     });
   }, 1000);

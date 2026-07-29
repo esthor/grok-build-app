@@ -28,14 +28,25 @@ export const toolRadarWidget: WidgetDef = {
     let tools: Record<string, { count: number; failures: number }> = {};
     const prevCounts = new Map<string, number>();
     const pings: Ping[] = [];
+    let sessionId = "";
 
     const spokeAngle = (idx: number, n: number): number => (idx / n) * Math.PI * 2 - Math.PI / 2;
 
     store.on("agent", (agent) => {
       if (agent === null) {
         tools = {};
+        prevCounts.clear();
+        pings.length = 0;
+        sessionId = "";
         setStatus("");
         return;
+      }
+      if (agent.id !== sessionId) {
+        // New session: drop the old baselines or pings stay dark until the
+        // new counts overtake the previous session's peaks.
+        sessionId = agent.id;
+        prevCounts.clear();
+        pings.length = 0;
       }
       tools = agent.tools;
       const names = Object.keys(tools).sort((a, b) => (tools[b]?.count ?? 0) - (tools[a]?.count ?? 0)).slice(0, 8);

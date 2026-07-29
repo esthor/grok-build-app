@@ -237,7 +237,7 @@ function main(): void {
         const nx = Math.round((mv.clientX - startX) / SNAP) * SNAP;
         const ny = Math.round((mv.clientY - startY) / SNAP) * SNAP;
         const maxX = Math.max(0, window.innerWidth - r.w);
-        const maxY = Math.max(TOP - 16, window.innerHeight - 24);
+        const maxY = Math.max(TOP - 16, window.innerHeight - r.h);
         const next: Rect = {
           x: Math.min(Math.max(0, nx), maxX),
           y: Math.min(Math.max(TOP - 16, ny), maxY),
