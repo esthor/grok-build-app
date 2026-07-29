@@ -12,6 +12,14 @@ tone_instructions: >-
 reviews:
   profile: assertive
   request_changes_workflow: true
+  changed_files_summary: true
+  sequence_diagrams: true
+  estimate_code_review_effort: true
+  related_issues: true
+  related_prs: true
+  poem: true
+  suggested_labels: true
+  auto_apply_labels: true
   auto_review:
     drafts: true
   finishing_touches:
@@ -19,7 +27,24 @@ reviews:
       enabled: false
     simplify:
       enabled: true
+chat:
+  integrations:
+    jira:
+      usage: disabled
+    linear:
+      usage: disabled
 knowledge_base:
   code_guidelines:
     filePatterns:
       - "**/AGENTS.md"
+  jira:
+    usage: disabled
+  linear:
+    usage: disabled
+  mcp:
+    usage: disabled
+issue_enrichment:
+  auto_enrich:
+    enabled: true
+  labeling:
+    auto_apply_labels: true
