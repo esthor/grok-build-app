@@ -10,6 +10,7 @@ tone_instructions: >-
   collaborators: give context and desired outcomes, preserve autonomy, and
   flag concrete risks or boundary violations—not preferred process.
 reviews:
+  profile: assertive
   request_changes_workflow: true
   auto_review:
     drafts: true
