@@ -35,6 +35,12 @@ repository. `CLAUDE.md` is a compatibility symlink to it.
 
 ## Repository-specific contract
 
-This repository is new. Its product scope, runtime, source-of-truth boundaries,
-and verification commands are not yet encoded. Add those facts here when the
-architecture exists; do not invent them from the scaffold.
+This repository owns a collection of Grok Build desktop apps and their release
+record.
+
+- Each app lives at `apps/<slug>/` and owns its source, toolchain, lockfiles,
+  checks, documentation, assets, and packaging.
+- `apps/README.md` is the catalog and release ledger. Record release dates and
+  X post URLs only after publication is verified.
+- Read an app's README and nearest nested `AGENTS.md` for its exact commands
+  and contracts.
