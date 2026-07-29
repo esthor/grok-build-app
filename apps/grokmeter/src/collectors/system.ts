@@ -102,9 +102,13 @@ export function startSystem(emit: Emit): void {
     const line = out.split("\n").find((l) => l.includes("<Link#"));
     if (line === undefined) return;
     const cols = line.trim().split(/\s+/);
-    // Name Mtu Network Address Ipkts Ierrs Ibytes Opkts Oerrs Obytes
-    const rx = Number(cols[6] ?? "0");
-    const tx = Number(cols[9] ?? "0");
+    // ... Ipkts Ierrs Ibytes Opkts Oerrs Obytes Coll — index from the end:
+    // the Address column is empty on some interfaces (utun, awdl), which
+    // shifts every position-from-start.
+    if (cols.length < 7) return;
+    const rx = Number(cols[cols.length - 5] ?? "0");
+    const tx = Number(cols[cols.length - 2] ?? "0");
+    if (!Number.isFinite(rx) || !Number.isFinite(tx)) return;
     const now = Date.now();
     if (state.netAt > 0 && rx >= state.rxTotal && tx >= state.txTotal) {
       const dt = (now - state.netAt) / 1000;

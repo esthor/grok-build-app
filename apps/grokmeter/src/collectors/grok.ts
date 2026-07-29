@@ -503,10 +503,13 @@ export function startGrok(emit: Emit): void {
     const fresh = new SessionWatch(dir, id, cwd);
     await fresh.refreshMeta();
 
-    // Replay the whole event log to rebuild counters; only surface the tail.
+    // Replay the whole event log (and the recent updates window) to rebuild
+    // counters; surface only a short, time-ordered tail in the feed.
     const backfill: FeedItem[] = [];
     await fresh.events.poll((line) => fresh.foldEvent(line, backfill));
+    await fresh.updates.poll((line) => fresh.foldUpdate(line, backfill));
     await fresh.hunks.poll((line) => fresh.foldHunk(line));
+    backfill.sort((a, b) => a.at - b.at);
     const recent = backfill.slice(-30);
 
     watch = fresh;

@@ -123,7 +123,17 @@ export const contextRingWidget: WidgetDef = {
         setStatus("");
         return;
       }
-      const frac = Math.min(1, agent.contextUsedTokens / Math.max(1, agent.contextWindowTokens));
+      if (agent.contextWindowTokens <= 0) {
+        // Window size unknown (fresh session, signals.json not written yet):
+        // show the raw counter rather than a fabricated percentage.
+        val.setAttribute("d", arcPath(c, c, rMain, A0, A0));
+        pct.textContent = "—";
+        tokens.textContent = `${fmtTokens(agent.contextUsedTokens)} TOK`;
+        meta.textContent = "WINDOW SIZE UNKNOWN";
+        setStatus("ok");
+        return;
+      }
+      const frac = Math.min(1, agent.contextUsedTokens / agent.contextWindowTokens);
       val.setAttribute("d", arcPath(c, c, rMain, A0, A0 + frac * SWEEP));
       const color = frac > 0.85 ? "var(--bad)" : frac > 0.6 ? "var(--warn)" : "var(--accent)";
       val.setAttribute("stroke", color);
