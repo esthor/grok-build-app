@@ -1,0 +1,13 @@
+{
+  "name": "@grok-build-app/grok-harness",
+  "version": "0.1.0",
+  "description": "Single source of truth for grok-build CLI session interfaces: disk session files, ACP update stream, leader socket, headless output, tool taxonomy.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "check": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}

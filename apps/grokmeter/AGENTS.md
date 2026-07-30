@@ -16,6 +16,8 @@ Contracts to preserve:
 - Collectors ("measures") and widgets ("meters") only communicate through
   `src/shared/protocol.ts`. Demo and live emit the same wire types; the UI
   must not be able to tell which is which.
+- Grok interface knowledge (session file schemas, parsers, tailing) comes
+  from `packages/grok-harness` — never inline it here.
 - Honest data, decorative motion: animation is fine, fabricated numbers are
   not. If a stat is unavailable, show its absence (see the live CPU
   per-core fallback).
