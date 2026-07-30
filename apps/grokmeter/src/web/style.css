@@ -93,6 +93,29 @@
   --grid-dot: rgba(223, 232, 240, 0.04);
 }
 
+/* Strict grayscale: no hue anywhere; state reads through intensity and the
+   status-lamp pulse cadence instead of color. */
+[data-theme="mono"] {
+  --bg: #0a0a0b;
+  --bg-glow: #161618;
+  --panel: rgba(20, 20, 22, 0.55);
+  --panel-2: rgba(12, 12, 14, 0.7);
+  --ink: #ececee;
+  --dim: #7a7a80;
+  --faint: #3d3d42;
+  --accent: #f4f4f5;
+  --accent-rgb: 244, 244, 245;
+  --accent-2: #b8b8bd;
+  --accent-2-rgb: 184, 184, 189;
+  --good: #c9c9ce;
+  --warn: #f0f0f2;
+  --bad: #ffffff;
+  --hairline: rgba(244, 244, 245, 0.13);
+  --bracket: rgba(244, 244, 245, 0.6);
+  --glow: rgba(244, 244, 245, 0.35);
+  --grid-dot: rgba(244, 244, 245, 0.045);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -488,7 +511,10 @@ canvas.fill {
 .feed-row.k-tool_end.fail .g { color: var(--bad); }
 .feed-row.k-tool_end.fail .x { color: var(--bad); }
 .feed-row.k-perm_req .x,
-.feed-row.k-perm_req .g { color: var(--warn); text-shadow: 0 0 8px rgba(255, 209, 102, 0.4); }
+.feed-row.k-perm_req .g {
+  color: var(--warn);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--warn) 40%, transparent);
+}
 .feed-row.k-perm_res .x,
 .feed-row.k-perm_res .g { color: var(--dim); }
 .feed-row.k-edit .x { color: var(--accent-2); }
@@ -523,8 +549,8 @@ canvas.fill {
 
 .feed-row.k-perm_req .tool-chip {
   color: var(--warn);
-  border-color: rgba(255, 209, 102, 0.5);
-  background: rgba(255, 209, 102, 0.08);
+  border-color: color-mix(in srgb, var(--warn) 50%, transparent);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
 }
 
 .feed-row.k-tool_end .tool-chip {

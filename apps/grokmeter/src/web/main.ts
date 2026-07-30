@@ -54,12 +54,14 @@ const TOP = 52;
 const SNAP = 8;
 const LAYOUT_KEY = "grokmeter.layout.v1";
 const THEME_KEY = "grokmeter.theme";
-const THEMES = ["cyan", "ember", "matrix", "ghost"] as const;
+const THEMES = ["ghost", "mono", "cyan", "ember", "matrix"] as const;
+const DEFAULT_THEME = "ghost";
 const THEME_LABEL: Record<string, string> = {
+  ghost: "MONO://GHOST",
+  mono: "MONO://CHROME",
   cyan: "HUD://CYAN",
   ember: "GRID://EMBER",
   matrix: "NET://MATRIX",
-  ghost: "MONO://GHOST",
 };
 
 function defaultLayout(vw: number): Map<string, Rect> {
@@ -131,11 +133,11 @@ function main(): void {
     trayTheme.textContent = THEME_LABEL[name] ?? name.toUpperCase();
     backdrop.retheme();
   };
-  setTheme(localStorage.getItem(THEME_KEY) ?? "cyan");
+  setTheme(localStorage.getItem(THEME_KEY) ?? DEFAULT_THEME);
   const cycleTheme = (): void => {
-    const cur = document.documentElement.getAttribute("data-theme") ?? "cyan";
+    const cur = document.documentElement.getAttribute("data-theme") ?? DEFAULT_THEME;
     const idx = THEMES.indexOf(cur as (typeof THEMES)[number]);
-    const next = THEMES[(idx + 1) % THEMES.length] ?? "cyan";
+    const next = THEMES[(idx + 1) % THEMES.length] ?? DEFAULT_THEME;
     setTheme(next);
   };
   trayTheme.addEventListener("click", cycleTheme);

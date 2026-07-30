@@ -99,10 +99,32 @@ difference — that's the measures/meters split doing its job.
 | Key / UI | Action |
 |---|---|
 | `E` / `LOCKED` button | toggle edit mode (drag widgets, 8 px snap) |
-| `T` / theme button | cycle `HUD://CYAN → GRID://EMBER → NET://MATRIX → MONO://GHOST` |
+| `T` / theme button | cycle `MONO://GHOST → MONO://CHROME → HUD://CYAN → GRID://EMBER → NET://MATRIX` |
 | `R` | reset layout to the packed default |
 
-Layout and theme persist in `localStorage`.
+Layout and theme persist in `localStorage`. `MONO://GHOST` is the default;
+`MONO://CHROME` is its strict-grayscale sibling — no hue anywhere, state
+reads through intensity and pulse cadence.
+
+## Data provenance
+
+Honest data, decorative motion. This ledger tracks exactly which readings
+are real, which are degraded, and which are theater:
+
+| Reading | Live source | Status |
+|---|---|---|
+| Agent phase, turns, TTFT, tool counts/durations/outcomes, permission counts + waits | folded from `events.jsonl` | ✅ real |
+| Tool call detail, thoughts/messages text, context occupancy | `updates.jsonl` stream (`_meta.totalTokens` is the harness's own bytes/4 estimate) | ✅ real (upstream estimate) |
+| Session identity, git head, model, sandbox | `summary.json` | ✅ real |
+| Line churn (+/−, files) | `hunk_records.jsonl`, latest record per hunk | ✅ real |
+| CPU total, load, memory, network, disk, processes, uptime | `top` / `sysctl` / `vm_stat` / `netstat` / `df` / `ps` | ✅ real |
+| Now-playing track/artist/album/position | AppleScript (Spotify, then Music), 3 s poll | ✅ real, coarse |
+| ITL P50/P99, compaction count, context **window size** | `signals.json` — grok updates it sparsely (observed hours stale); window size is constant per model so staleness is benign | ⚠️ stale-prone |
+| User/assistant message counts | chunk-burst heuristic over `updates.jsonl` (2.5 s gap) | ⚠️ approximate |
+| Per-core CPU bars | unavailable on macOS without privileges — live emits `cores: []` and the widget shows the real total-load bar instead; per-core bars appear only in demo | ⚠️ demo-only |
+| Media visualizer bars | animation keyed to play state — **not** an audio spectrum | 🎭 decorative |
+| Radar sweep/pings, rotator rings, backdrop grid/particles/scan | pure motion, no data claim | 🎭 decorative |
+| Everything under `bun run demo` | scripted generators, tray shows `MODE:DEMO` | 🎭 demo |
 
 ## Strictness
 
