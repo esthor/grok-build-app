@@ -1,3 +1,5 @@
+import { num, parseObj, str, type JObj } from "./json.ts";
+
 // Schemas for headless grok (`grok -p`) output. Mirrors
 // crates/codegen/xai-grok-pager/src/headless.rs.
 //
@@ -7,7 +9,6 @@
 // snake_case/camelCase in the JSON result is frozen upstream for
 // compatibility — do not "fix" it here.
 
-import { num, parseObj, str } from "./json.ts";
 
 /** One NDJSON line of `--output-format streaming-json`. The upstream set is
  * documented as non-exhaustive: switch on `type` and ignore unknowns. */
@@ -71,15 +72,28 @@ export type HeadlessJsonResult = {
   inputTokens: number;
   outputTokens: number;
   cacheReadInputTokens: number;
+  reasoningTokens: number;
   totalTokens: number;
+  usageIsIncomplete: boolean;
+  costIsPartial: boolean;
   /** Fail-closed: null means unknown, never free. */
   totalCostUsdTicks: number | null;
+  /** Float dollars when present (prefer ticks). */
+  totalCostUsd: number | null;
+  /** Per-model breakdown (camelCase keys inside). */
+  modelUsage: JObj | null;
+  /** Raw root for unmodeled fields. */
+  raw: JObj;
 };
 
 export function parseHeadlessJsonResult(text: string): HeadlessJsonResult | null {
   const o = parseObj(text);
   if (o === null) return null;
   const usage = typeof o["usage"] === "object" && o["usage"] !== null ? (o["usage"] as Record<string, unknown>) : {};
+  const modelUsage =
+    typeof o["modelUsage"] === "object" && o["modelUsage"] !== null && !Array.isArray(o["modelUsage"])
+      ? (o["modelUsage"] as JObj)
+      : null;
   return {
     text: str(o["text"]),
     stopReason: str(o["stopReason"]),
@@ -89,7 +103,13 @@ export function parseHeadlessJsonResult(text: string): HeadlessJsonResult | null
     inputTokens: num(usage["input_tokens"]),
     outputTokens: num(usage["output_tokens"]),
     cacheReadInputTokens: num(usage["cache_read_input_tokens"]),
+    reasoningTokens: num(usage["reasoning_tokens"]),
     totalTokens: num(usage["total_tokens"]),
+    usageIsIncomplete: o["usage_is_incomplete"] === true,
+    costIsPartial: o["cost_is_partial"] === true,
     totalCostUsdTicks: typeof o["total_cost_usd_ticks"] === "number" ? o["total_cost_usd_ticks"] : null,
+    totalCostUsd: typeof o["total_cost_usd"] === "number" ? o["total_cost_usd"] : null,
+    modelUsage,
+    raw: o,
   };
 }

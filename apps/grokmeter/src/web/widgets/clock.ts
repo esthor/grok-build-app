@@ -42,8 +42,12 @@ export const clockWidget: WidgetDef = {
       sec.textContent = pad(d.getSeconds());
       const days = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
       const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
-      const tz = -d.getTimezoneOffset() / 60;
-      const tzs = `UTC${tz >= 0 ? "+" : ""}${tz}`;
+      // Handle half/quarter-hour zones (UTC+5:30, +5:45, −3:30) properly.
+      const offMin = -d.getTimezoneOffset();
+      const sign = offMin >= 0 ? "+" : "-";
+      const abs = Math.abs(offMin);
+      const mm = abs % 60;
+      const tzs = `UTC${sign}${Math.floor(abs / 60)}${mm > 0 ? `:${mm.toString().padStart(2, "0")}` : ""}`;
       date.textContent = `${days[d.getDay()] ?? ""} ${pad(d.getDate())} ${months[d.getMonth()] ?? ""} ${d.getFullYear()} · ${tzs}`;
     };
     render();

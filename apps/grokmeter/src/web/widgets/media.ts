@@ -1,6 +1,6 @@
 // NOW PLAYING — track readout, progress, and decorative level bars.
 
-import { clamp, cssVar, el, fmtClock } from "../lib.ts";
+import { clamp, cssVar, el, fmtClock, frameCanvas } from "../lib.ts";
 import type { WidgetDef } from "../widget.ts";
 
 const BARS = 42;
@@ -59,18 +59,10 @@ export const mediaWidget: WidgetDef = {
     });
 
     const tick = (now: number): void => {
-      const dpr = window.devicePixelRatio || 1;
+      const ctx = frameCanvas(viz);
+      if (ctx === null) return;
       const w = viz.clientWidth;
       const h = viz.clientHeight;
-      if (w === 0) return;
-      if (viz.width !== w * dpr || viz.height !== h * dpr) {
-        viz.width = w * dpr;
-        viz.height = h * dpr;
-      }
-      const ctx = viz.getContext("2d");
-      if (ctx === null) return;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, w, h);
       const t = now / 1000;
       const bw = w / BARS;
       const color = cssVar("--accent");

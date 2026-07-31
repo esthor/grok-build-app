@@ -9,7 +9,9 @@ import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  HOME_FILES,
   SESSION_FILES,
+  SESSION_ID_RE,
   Tail,
   chunkText,
   decodeCwdDirname,
@@ -140,9 +142,10 @@ class SessionWatch {
       // counters before the first stream observation (window size and ITL
       // percentiles are the slow-moving values we actually want from it).
       this.contextWindowTokens = signals.contextWindowTokens > 0 ? signals.contextWindowTokens : this.contextWindowTokens;
-      this.compactionCount = signals.compactionCount;
-      this.itlP50 = signals.itlP50Ms;
-      this.itlP99 = signals.itlP99Ms;
+      // Preserve priors when signals omits slow-moving fields (defaults to 0).
+      if (signals.compactionCount > 0 || this.compactionCount === 0) this.compactionCount = signals.compactionCount;
+      if (signals.itlP50Ms > 0 || this.itlP50 === 0) this.itlP50 = signals.itlP50Ms;
+      if (signals.itlP99Ms > 0 || this.itlP99 === 0) this.itlP99 = signals.itlP99Ms;
       this.errorCount = Math.max(this.errorCount, signals.errorCount);
       if (this.contextUsedTokens === 0) this.contextUsedTokens = signals.contextTokensUsed;
       if (this.totalTokens === 0) this.totalTokens = signals.contextTokensUsed;
@@ -240,7 +243,9 @@ class SessionWatch {
   foldUpdate(line: string, feed: FeedItem[]): void {
     const env = parseUpdateLine(line);
     if (env === null) return;
-    const at = env.agentTimestampMs ?? Date.now();
+    // Prefer the agent's own millisecond stamp, then the envelope write
+    // time; never invent "now" for a replayed line.
+    const at = env.agentTimestampMs ?? (env.timestamp > 0 ? env.timestamp * 1000 : Date.now());
 
     if (env.totalTokens !== null && env.totalTokens >= 0) {
       // Context occupancy tracks the stream (down too, e.g. compaction);
@@ -319,7 +324,9 @@ class SessionWatch {
       sandbox: this.sandbox,
       live,
       startedAt: this.createdAt,
-      updatedAt: Date.now(),
+      // A live session is being updated right now; a disk-fallback session's
+      // honest "last activity" is what summary.json recorded, not "now".
+      updatedAt: live ? Date.now() : this.updatedAt,
       phase: this.permPending ? "permission_prompt" : this.phase,
       turnCount: this.turnCount,
       userMessages: this.userMessages,
@@ -366,7 +373,7 @@ function pushRing(ring: FeedItem[], items: FeedItem[]): void {
 // ── Discovery ────────────────────────────────────────────────────────────
 
 async function readActive(): Promise<ActiveSessionEntry[]> {
-  return parseActiveSessions(await readText(join(home(), "active_sessions.json")));
+  return parseActiveSessions(await readText(join(home(), HOME_FILES.activeSessions)));
 }
 
 function pidAlive(pid: number): boolean {
@@ -381,13 +388,13 @@ function pidAlive(pid: number): boolean {
 
 async function findSessionDir(cwd: string, id: string): Promise<string | null> {
   const direct = sessionDir(home(), cwd, id, join);
-  if (direct !== null) {
-    try {
-      await stat(join(direct, SESSION_FILES.summary));
-      return direct;
-    } catch {
-      // Fall through to a scan (encoding edge cases, e.g. >255-byte cwds).
-    }
+  // sessionDir returns null for invalid ids — never path-join raw ids.
+  if (direct === null) return null;
+  try {
+    await stat(join(direct, SESSION_FILES.summary));
+    return direct;
+  } catch {
+    // Fall through to a scan (encoding edge cases, e.g. >255-byte cwds).
   }
   const root = join(home(), "sessions");
   try {
@@ -407,8 +414,18 @@ async function findSessionDir(cwd: string, id: string): Promise<string | null> {
   return null;
 }
 
+/** The fallback scan readdirs every cwd bucket and stats every summary —
+ * hundreds of syscalls. The answer rarely changes while idle, and idle is
+ * where the deck lives, so cache it briefly. */
+let recentScanCache: { at: number; value: { dir: string; id: string; cwd: string } | null } = {
+  at: 0,
+  value: null,
+};
+const RECENT_SCAN_TTL_MS = 15_000;
+
 /** Most recently touched session on disk, for when nothing is live. */
 async function findRecentSession(): Promise<{ dir: string; id: string; cwd: string } | null> {
+  if (Date.now() - recentScanCache.at < RECENT_SCAN_TTL_MS) return recentScanCache.value;
   const root = join(home(), "sessions");
   let best: { dir: string; id: string; cwd: string; mtime: number } | null = null;
   let cwdDirs: string[] = [];
@@ -428,8 +445,9 @@ async function findRecentSession(): Promise<{ dir: string; id: string; cwd: stri
       continue;
     }
     for (const id of ids) {
-      const dir = sessionDir(home(), decoded, id, join);
-      if (dir === null) continue;
+      // `base` is authoritative here (long cwds encode differently on disk);
+      // the id just has to be a valid session id before any path join.
+      if (!SESSION_ID_RE.test(id)) continue;
       try {
         const s = await stat(join(base, id, SESSION_FILES.summary));
         if (best === null || s.mtimeMs > best.mtime) {
@@ -440,7 +458,9 @@ async function findRecentSession(): Promise<{ dir: string; id: string; cwd: stri
       }
     }
   }
-  return best === null ? null : { dir: best.dir, id: best.id, cwd: best.cwd };
+  const value = best === null ? null : { dir: best.dir, id: best.id, cwd: best.cwd };
+  recentScanCache = { at: Date.now(), value };
+  return value;
 }
 
 // ── Public entry ─────────────────────────────────────────────────────────
@@ -572,9 +592,14 @@ export function startGrok(emit: Emit): GrokHandle {
   const discoverOnce = (): void => {
     if (discovering) return;
     discovering = true;
-    void discover().finally(() => {
-      discovering = false;
-    });
+    void discover()
+      .catch(() => {
+        // A transient FS race must cost one tick, never the process:
+        // unhandled rejections are fatal under Bun.
+      })
+      .finally(() => {
+        discovering = false;
+      });
   };
   discoverOnce();
   setInterval(discoverOnce, 2000);
@@ -599,14 +624,19 @@ export function startGrok(emit: Emit): GrokHandle {
       const entry = focused();
       if (entry !== null) emit.agent(entry.watch.snapshot(entry.live));
       emitFleet();
-    })().finally(() => {
-      tailing = false;
-    });
+    })()
+      .catch(() => {
+        // Skip the tick on a transient FS race; never surface an unhandled
+        // rejection from a timer body.
+      })
+      .finally(() => {
+        tailing = false;
+      });
   }, 900);
 
   // Meta refresh (summary/signals are small atomic files).
   setInterval(() => {
-    for (const { watch } of watches.values()) void watch.refreshMeta();
+    for (const { watch } of watches.values()) void watch.refreshMeta().catch(() => {});
   }, 3000);
 
   return {

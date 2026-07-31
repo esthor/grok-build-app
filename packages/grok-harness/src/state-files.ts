@@ -65,6 +65,10 @@ export type SessionSummary = {
   /** "fork" | "subagent" | "subagent_fork" | "worktree" | "" — sessions whose
    * kind starts with "subagent" are hidden by default in grok's own UI. */
   sessionKind: string;
+  parentSessionId: string;
+  hidden: boolean;
+  forkedAt: string;
+  worktreeLabel: string;
 };
 
 export function parseSummary(text: string): SessionSummary | null {
@@ -91,6 +95,10 @@ export function parseSummary(text: string): SessionSummary | null {
     gitCommit: str(o["head_commit"]),
     gitRootDir: str(o["git_root_dir"]),
     sessionKind: str(o["session_kind"]),
+    parentSessionId: str(o["parent_session_id"]),
+    hidden: o["hidden"] === true,
+    forkedAt: str(o["forked_at"]),
+    worktreeLabel: str(o["worktree_label"]),
   };
 }
 
@@ -133,10 +141,20 @@ export function parseSignals(text: string): SessionSignals | null {
 export type HunkRecord = {
   hunkId: string;
   filePath: string;
+  hunkStart: number;
+  hunkEnd: number;
   linesAdded: number;
   linesRemoved: number;
   authorType: "agent" | "human" | string;
+  authorId: string;
+  agentId: string;
+  sessionId: string;
   at: number;
+  promptIndex: number | null;
+  sourceType: string;
+  /** added | updated | removed */
+  eventType: string;
+  removalReason: string;
 };
 
 export function parseHunkLine(line: string): HunkRecord | null {
@@ -147,9 +165,18 @@ export function parseHunkLine(line: string): HunkRecord | null {
   return {
     hunkId,
     filePath: str(o["filePath"]),
+    hunkStart: num(o["hunkStart"]),
+    hunkEnd: num(o["hunkEnd"]),
     linesAdded: num(o["linesAdded"]),
     linesRemoved: num(o["linesRemoved"]),
     authorType: str(o["authorType"]),
+    authorId: str(o["authorId"]),
+    agentId: str(o["agentId"]),
+    sessionId: str(o["sessionId"]),
     at: Date.parse(str(o["timestamp"])) || 0,
+    promptIndex: typeof o["promptIndex"] === "number" ? o["promptIndex"] : null,
+    sourceType: str(o["sourceType"]),
+    eventType: str(o["eventType"]),
+    removalReason: str(o["removalReason"]),
   };
 }
