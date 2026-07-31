@@ -10,7 +10,8 @@ export type WinId =
   | "todos"
   | "mcp"
   | "skinlab"
-  | "head";
+  | "head"
+  | "museum";
 
 export const WIN_IDS: readonly WinId[] = [
   "main",
@@ -22,6 +23,7 @@ export const WIN_IDS: readonly WinId[] = [
   "mcp",
   "skinlab",
   "head",
+  "museum",
 ];
 
 export interface WinRect {
@@ -47,10 +49,22 @@ export interface WindowsState {
  * main/eq/playlist tower, terminal + vis to the right.
  */
 const DEFAULT_WINDOWS: WindowsState = {
-  order: ["todos", "mcp", "skinlab", "vis", "terminal", "queue", "tuner", "head", "main"],
+  order: [
+    "todos",
+    "mcp",
+    "skinlab",
+    "museum",
+    "vis",
+    "terminal",
+    "queue",
+    "tuner",
+    "head",
+    "main",
+  ],
   wins: {
     // the classic-skin head unit: fixed 275x116 at 2x, chromeless
     head: { x: 640, y: 40, w: 550, h: 232, open: false, shaded: false },
+    museum: { x: 540, y: 160, w: 470, h: 434, open: false, shaded: false },
     main: { x: 16, y: 16, w: 550, h: 232, open: true, shaded: false },
     tuner: { x: 16, y: 248, w: 550, h: 232, open: true, shaded: false },
     queue: { x: 16, y: 480, w: 550, h: 318, open: true, shaded: false },

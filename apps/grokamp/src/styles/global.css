@@ -1065,6 +1065,61 @@ html[data-scanlines="on"] .lcd::after {
   margin-top: auto;
 }
 
+/* ------------------------------------------------ museum */
+
+.museum-tile {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.museum-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--sk-listBg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.museum-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 8px;
+  line-height: 20px;
+}
+
+.museum-name {
+  color: var(--sk-listText);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.museum-name:hover {
+  color: var(--sk-listCurrent);
+  text-decoration: underline;
+}
+
+.museum-list::-webkit-scrollbar {
+  width: 14px;
+}
+
+.museum-list::-webkit-scrollbar-track {
+  background: var(--sk-chromeDeep);
+}
+
+.museum-list::-webkit-scrollbar-thumb {
+  background: var(--sk-btnFace);
+  border: 1px solid;
+  border-color: var(--sk-edgeLight) var(--sk-edgeDark) var(--sk-edgeDark) var(--sk-edgeLight);
+}
+
 /* ------------------------------------------------ about */
 
 .about-backdrop {

@@ -162,6 +162,27 @@ export function setSkin(name: string): void {
   applySkin(skin);
 }
 
+/**
+ * Remove a custom skin. If it shadowed a builtin, the builtin resurfaces
+ * under the same name; otherwise a deleted-while-worn skin falls back to
+ * the default. Builtins themselves are not removable.
+ */
+export function removeCustomSkin(name: string): boolean {
+  if (!settingsStore.state.customSkins.some((c) => c.name === name)) {
+    return false;
+  }
+  settingsStore.setState((s) => ({
+    ...s,
+    customSkins: s.customSkins.filter((c) => c.name !== name),
+    skinName:
+      s.skinName === name && !BUILTIN_SKINS.some((b) => b.name === name)
+        ? DEFAULT_SKIN_NAME
+        : s.skinName,
+  }));
+  applySkin(currentSkin());
+  return true;
+}
+
 export function upsertCustomSkin(skin: Skin): void {
   settingsStore.setState((s) => ({
     ...s,

@@ -6,18 +6,12 @@ import { buildVis, lerpHex } from "../skins/ramp";
 import { parseSkin, skinToJson } from "../skins/runtime";
 import type { Skin, SkinColors } from "../skins/types";
 import { SKIN_COLOR_KEYS } from "../skins/types";
-import {
-  deriveGrokampSkin,
-  disposeWsz,
-  forgetWsz,
-  loadWsz,
-  persistWsz,
-  setWornWsz,
-} from "../skins/wsz";
+import { forgetWsz, wearWsz } from "../skins/wsz";
 import { pushLog } from "../state/session";
 import {
   allSkins,
   currentSkin,
+  removeCustomSkin,
   setSkin,
   settingsStore,
   upsertCustomSkin,
@@ -117,6 +111,7 @@ const LABELS: Partial<Record<keyof SkinColors, string>> = {
 export function SkinLabTile(): ReactNode {
   const skinName = useStore(settingsStore, (s) => s.skinName);
   const customCount = useStore(settingsStore, (s) => s.customSkins.length);
+  const customSkins = useStore(settingsStore, (s) => s.customSkins);
   const [draft, setDraft] = useState<Skin>(() => currentSkin());
   // an imported/authored vis palette is data we must not clobber; only
   // re-synthesize it after the user actually repaints colors
@@ -156,29 +151,9 @@ export function SkinLabTile(): ReactNode {
     pushLog("sys", `skin exported: ${a.download}`);
   };
 
-  const wearWszBytes = async (bytes: Uint8Array, name: string): Promise<void> => {
-    try {
-      const wsz = await loadWsz(bytes, name);
-      if (wsz.sheets.main === undefined) {
-        disposeWsz(wsz); // release the bitmaps we won't be wearing
-        pushLog("sys", `wsz rejected: no main.bmp in ${name}`, "err");
-        return;
-      }
-      setWornWsz(wsz);
-      upsertCustomSkin(deriveGrokampSkin(wsz));
-      setWindowOpen("head", true);
-      if (!persistWsz(bytes, name)) {
-        pushLog("sys", "skin too large to persist — worn for this session only", "warn");
-      }
-      pushLog("sys", `wearing ${name} — head unit online`, "ok");
-    } catch {
-      pushLog("sys", `wsz rejected: ${name} is not a readable zip`, "err");
-    }
-  };
-
   const importFile = async (file: File): Promise<void> => {
     if (/\.(wsz|zip)$/i.test(file.name)) {
-      await wearWszBytes(new Uint8Array(await file.arrayBuffer()), file.name.replace(/\.(wsz|zip)$/i, ""));
+      await wearWsz(new Uint8Array(await file.arrayBuffer()), file.name.replace(/\.(wsz|zip)$/i, ""));
       return;
     }
     try {
@@ -269,6 +244,19 @@ export function SkinLabTile(): ReactNode {
         >
           RANDOM
         </SquareBtn>
+        <SquareBtn
+          title="delete this custom skin (builtins are forever)"
+          disabled={!customSkins.some((c) => c.name === skinName)}
+          onClick={() => {
+            if (removeCustomSkin(skinName)) {
+              pushLog("sys", `skin deleted: ${skinName}`);
+              setDraft(currentSkin());
+              setColorsDirty(false);
+            }
+          }}
+        >
+          DEL
+        </SquareBtn>
       </div>
       <div className="skinlab-row skinlab-actions">
         <SquareBtn
@@ -284,7 +272,7 @@ export function SkinLabTile(): ReactNode {
           onClick={() => {
             void (async () => {
               const res = await fetch(demoWszUrl);
-              await wearWszBytes(new Uint8Array(await res.arrayBuffer()), "grokamp-classic");
+              await wearWsz(new Uint8Array(await res.arrayBuffer()), "grokamp-classic");
             })();
           }}
         >
@@ -299,6 +287,14 @@ export function SkinLabTile(): ReactNode {
           }}
         >
           EJECT
+        </SquareBtn>
+        <SquareBtn
+          title="browse the winamp skin museum (100k+ skins)"
+          onClick={() => {
+            setWindowOpen("museum", true);
+          }}
+        >
+          MUSEUM
         </SquareBtn>
       </div>
       <div className="skinlab-hint">

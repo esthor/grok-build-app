@@ -53,7 +53,8 @@ bun run tauri dev
 | **VISUALIZER** | vis window | spectrum (19 bars + falling peak caps) / oscilloscope / plasma, fed by token flow — tool calls kick the bass |
 | **TODO LIST** | — | the agent's live plan; in-progress blinks |
 | **MCP SERVERS** | plugins | server rack with status LEDs |
-| **SKIN LAB** | skin picker + MS Paint | live recolor, APPLY/EXPORT/IMPORT/RANDOM, WEAR .WSZ |
+| **SKIN LAB** | skin picker + MS Paint | live recolor, APPLY/EXPORT/IMPORT/RANDOM/DEL, WEAR .WSZ |
+| **SKIN MUSEUM** | skins.webamp.org | search 100k+ archived classic skins, WEAR streams them on demand (never bundled) |
 | **HEAD UNIT** | the main window itself | a real 275×116 classic-skin window blitted from a user-supplied `.wsz` — pixel-perfect sprites, bitmap-font ticker, working transport (Alt+9) |
 
 Windows drag, **snap at the classic 10px** (20 at our 2× pixel grid),

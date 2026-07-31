@@ -3,6 +3,7 @@ import type { WinId } from "../state/windows";
 import type { ResizeSpec } from "../wm/Window";
 import { HeadTile } from "./HeadTile";
 import { MainTile } from "./MainTile";
+import { MuseumTile } from "./MuseumTile";
 import { McpTile } from "./McpTile";
 import { QueueTile } from "./QueueTile";
 import { SkinLabTile } from "./SkinLabTile";
@@ -59,4 +60,9 @@ export const WINDOW_DEFS: Readonly<Record<WinId, WindowDef>> = {
     resize: { min: { w: 370, h: 260 }, step: STEP },
   },
   head: { title: "HEAD UNIT", component: HeadTile, frameless: true },
+  museum: {
+    title: "SKIN MUSEUM",
+    component: MuseumTile,
+    resize: { min: { w: 420, h: 318 }, step: STEP },
+  },
 };

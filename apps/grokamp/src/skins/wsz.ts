@@ -1,5 +1,8 @@
 import { unzipSync } from "fflate";
 import { Store } from "@tanstack/store";
+import { pushLog } from "../state/session";
+import { upsertCustomSkin } from "../state/settings";
+import { setWindowOpen } from "../state/windows";
 import { buildVis, lerpHex } from "./ramp";
 import type { Skin, SkinColors } from "./types";
 
@@ -375,4 +378,37 @@ export function forgetWsz(): void {
     // fine
   }
   setWornWsz(null);
+}
+
+// ------------------------------------------------------------- wear flow
+
+/**
+ * The one path onto the body: load, validate, wear, re-dress the deck,
+ * open the head unit, persist. Shared by Skin Lab (file/demo) and the
+ * Museum tile. Returns true when the skin is worn.
+ */
+export async function wearWsz(bytes: Uint8Array, name: string): Promise<boolean> {
+  try {
+    const wsz = await loadWsz(bytes, name);
+    if (wsz.sheets.main === undefined) {
+      disposeWsz(wsz); // release the bitmaps we won't be wearing
+      pushLog(
+        "sys",
+        `wsz rejected: no classic sheets in ${name} (modern .wal skins need a different engine)`,
+        "err",
+      );
+      return false;
+    }
+    setWornWsz(wsz);
+    upsertCustomSkin(deriveGrokampSkin(wsz));
+    setWindowOpen("head", true);
+    if (!persistWsz(bytes, name)) {
+      pushLog("sys", "skin too large to persist — worn for this session only", "warn");
+    }
+    pushLog("sys", `wearing ${name} — head unit online`, "ok");
+    return true;
+  } catch {
+    pushLog("sys", `wsz rejected: ${name} is not a readable zip`, "err");
+    return false;
+  }
 }
