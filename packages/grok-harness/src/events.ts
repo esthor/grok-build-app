@@ -53,6 +53,21 @@ export const TURN_OUTCOMES: readonly TurnOutcome[] = ["completed", "cancelled", 
 
 export type SessionRelationship = "primary" | "subagent";
 
+export const CANCELLATION_CATEGORIES = [
+  "hook_denied",
+  "permission_rejected",
+  "permission_cancelled",
+  "mid_turn_abort",
+] as const;
+export type CancellationCategory = (typeof CANCELLATION_CATEGORIES)[number];
+
+export const REDIRECT_KINDS = ["interjection", "cancel_then_send", "queued_after_cancel"] as const;
+export type RedirectKind = (typeof REDIRECT_KINDS)[number];
+
+export const INTERJECTION_SOURCES = ["direct", "queue"] as const;
+export type InterjectionSource = (typeof INTERJECTION_SOURCES)[number];
+
+
 /** Every known events.jsonl `type` value (upstream Event enum, snake_case). */
 export const KNOWN_EVENT_TYPES = [
   "turn_started",

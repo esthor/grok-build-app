@@ -12,6 +12,9 @@ export const SESSION_FILES = {
   signals: "signals.json",
   plan: "plan.json",
   planMode: "plan_mode.json",
+  goalState: "goal/state.json",
+  announcementState: "announcement_state.json",
+  resourcesState: "resources_state.json",
   chatHistory: "chat_history.jsonl",
   updates: "updates.jsonl",
   events: "events.jsonl",
@@ -19,15 +22,27 @@ export const SESSION_FILES = {
   rewindPoints: "rewind_points.jsonl",
   systemPrompt: "system_prompt.txt",
   promptContext: "prompt_context.json",
+  /** Directory of compaction checkpoint blobs (not a single file). */
+  compactionCheckpoints: "compaction_checkpoints",
+  /** Prompt-attached images directory. */
+  images: "images",
+  /** Subagent metadata directory when present. */
+  subagents: "subagents",
 } as const;
 
 /** Files that live at $GROK_HOME top level. */
 export const HOME_FILES = {
   activeSessions: "active_sessions.json",
+  activeSessionsLock: "active_sessions.lock",
   config: "config.toml",
   pagerConfig: "pager.toml",
   unifiedLog: "logs/unified.jsonl",
   leaderSocket: "leader.sock",
+  leaderLock: "leader.lock",
+  disabledHooks: "disabled-hooks",
+  trustedHookProjects: "trusted-hook-projects",
+  version: "version.json",
+  auth: "auth.json",
 } as const;
 
 export type PathJoin = (...parts: string[]) => string;

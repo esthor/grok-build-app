@@ -73,3 +73,27 @@ export const META_DISPLAY_CWD = "x.ai/display_cwd";
 export const META_SKIP_ENVRC = "x.ai/skip_envrc";
 export const META_RESTORE_CODE = "x.ai/restore_code";
 export const META_PARTIAL = "x.ai/partial";
+
+// ── Hooks (client reverse methods) ───────────────────────────────────────
+export const XAI_HOOKS_RUN = "x.ai/hooks/run";
+export const XAI_HOOKS_EVENT = "x.ai/hooks/event";
+
+// ── Session lifecycle (extra) ────────────────────────────────────────────
+export const XAI_SESSION_STATE = "x.ai/session/state";
+export const XAI_SESSION_RENAME = "x.ai/session/rename";
+export const XAI_SESSION_DELETE = "x.ai/session/delete";
+export const XAI_SESSION_FORK = "x.ai/session/fork";
+export const XAI_SESSION_LOAD_HISTORY = "x.ai/session/load_history";
+export const XAI_SESSION_SEARCH = "x.ai/session/search";
+export const XAI_INTERJECT = "x.ai/interject";
+
+// ── Background work notifs ───────────────────────────────────────────────
+export const XAI_TASK_BACKGROUNDED = "x.ai/task_backgrounded";
+export const XAI_TASK_COMPLETED = "x.ai/task_completed";
+export const XAI_MONITOR_EVENT = "x.ai/monitor_event";
+export const XAI_QUEUE_CHANGED = "x.ai/queue/changed";
+
+// ── Mode / plan ──────────────────────────────────────────────────────────
+export const XAI_YOLO_MODE_CHANGED = "x.ai/yolo_mode_changed";
+export const XAI_TOGGLE_PLAN_MODE = "x.ai/toggle_plan_mode";
+export const XAI_PERMISSIONS_RESET = "x.ai/permissions/reset";

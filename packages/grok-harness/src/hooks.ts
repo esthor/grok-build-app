@@ -168,3 +168,72 @@ export function parseHooksJson(text: string): HooksMap | null {
 
 export const DEFAULT_HOOK_TIMEOUT_SECS = 5;
 export const DEFAULT_STOP_GATE_TIMEOUT_SECS = 600;
+
+/**
+ * Stdin envelope posted to command hooks (camelCase on the wire).
+ * Payload fields (toolName, toolInput, …) are flattened alongside these.
+ */
+export type HookEventEnvelope = {
+  hookEventName: string;
+  sessionId: string;
+  cwd: string;
+  workspaceRoot: string;
+  timestamp: string;
+  transcriptPath: string;
+  clientIdentifier: string;
+  promptId: string;
+  permissionMode: string;
+  /** Remaining payload fields (toolName, toolUseId, toolInput, …). */
+  payload: JObj;
+};
+
+export function parseHookEventEnvelope(text: string): HookEventEnvelope | null {
+  const o = parseObj(text);
+  if (o === null) return null;
+  const hookEventName = str(o["hookEventName"]);
+  if (hookEventName === "") return null;
+  const known = new Set([
+    "hookEventName",
+    "sessionId",
+    "cwd",
+    "workspaceRoot",
+    "timestamp",
+    "transcriptPath",
+    "clientIdentifier",
+    "promptId",
+    "permissionMode",
+  ]);
+  const payload: JObj = {};
+  for (const [k, v] of Object.entries(o)) {
+    if (!known.has(k)) payload[k] = v;
+  }
+  return {
+    hookEventName,
+    sessionId: str(o["sessionId"]),
+    cwd: str(o["cwd"]),
+    workspaceRoot: str(o["workspaceRoot"]),
+    timestamp: str(o["timestamp"]),
+    transcriptPath: str(o["transcriptPath"]),
+    clientIdentifier: str(o["clientIdentifier"]),
+    promptId: str(o["promptId"]),
+    permissionMode: str(o["permissionMode"]),
+    payload,
+  };
+}
+
+/** Gate response from x.ai/hooks/run — fail-open unless decision is deny. */
+export type HookGateDecision = {
+  decision: "continue" | "deny" | string;
+  reason: string;
+  additionalContext: string;
+};
+
+export function parseHookGateDecision(v: unknown): HookGateDecision | null {
+  if (typeof v !== "object" || v === null) return null;
+  const o = v as JObj;
+  return {
+    decision: str(o["decision"], "continue"),
+    reason: str(o["reason"]),
+    additionalContext: str(o["additionalContext"]),
+  };
+}
