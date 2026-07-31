@@ -78,3 +78,34 @@ export function sessionDir(home: string, cwd: string, sessionId: string, join: P
   if (!SESSION_ID_RE.test(sessionId)) return null;
   return join(sessionsRoot(home, join), encodeCwdDirname(cwd), sessionId);
 }
+
+/**
+ * Read the `.cwd` marker file written for long-path (blake3-hashed) session
+ * cwd directories. Returns the absolute path or null.
+ */
+export async function readCwdMarker(
+  cwdDirPath: string,
+  join: PathJoin,
+  readFile: (path: string) => Promise<string | null>,
+): Promise<string | null> {
+  const text = await readFile(join(cwdDirPath, ".cwd"));
+  if (text === null) return null;
+  const cwd = text.trim();
+  return cwd === "" ? null : cwd;
+}
+
+/**
+ * Resolve a sessions cwd-directory name to an absolute path. Tries URL-decode
+ * first; falls back to the `.cwd` marker for hashed long paths.
+ */
+export async function resolveCwdDirname(
+  dirname: string,
+  cwdDirPath: string,
+  join: PathJoin,
+  readFile: (path: string) => Promise<string | null>,
+): Promise<string | null> {
+  const decoded = decodeCwdDirname(dirname);
+  if (decoded !== null) return decoded;
+  return readCwdMarker(cwdDirPath, join, readFile);
+}
+

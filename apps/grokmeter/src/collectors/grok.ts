@@ -9,6 +9,7 @@ import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  HOME_FILES,
   SESSION_FILES,
   Tail,
   chunkText,
@@ -131,9 +132,10 @@ class SessionWatch {
       // counters before the first stream observation (window size and ITL
       // percentiles are the slow-moving values we actually want from it).
       this.contextWindowTokens = signals.contextWindowTokens > 0 ? signals.contextWindowTokens : this.contextWindowTokens;
-      this.compactionCount = signals.compactionCount;
-      this.itlP50 = signals.itlP50Ms;
-      this.itlP99 = signals.itlP99Ms;
+      // Preserve priors when signals omits slow-moving fields (defaults to 0).
+      if (signals.compactionCount > 0 || this.compactionCount === 0) this.compactionCount = signals.compactionCount;
+      if (signals.itlP50Ms > 0 || this.itlP50 === 0) this.itlP50 = signals.itlP50Ms;
+      if (signals.itlP99Ms > 0 || this.itlP99 === 0) this.itlP99 = signals.itlP99Ms;
       this.errorCount = Math.max(this.errorCount, signals.errorCount);
       if (this.contextUsedTokens === 0) this.contextUsedTokens = signals.contextTokensUsed;
       if (this.totalTokens === 0) this.totalTokens = signals.contextTokensUsed;
@@ -350,7 +352,7 @@ function clip(text: string, max: number): string {
 // ── Discovery ────────────────────────────────────────────────────────────
 
 async function readActive(): Promise<ActiveSessionEntry[]> {
-  return parseActiveSessions(await readText(join(home(), "active_sessions.json")));
+  return parseActiveSessions(await readText(join(home(), HOME_FILES.activeSessions)));
 }
 
 function pidAlive(pid: number): boolean {
@@ -365,13 +367,13 @@ function pidAlive(pid: number): boolean {
 
 async function findSessionDir(cwd: string, id: string): Promise<string | null> {
   const direct = sessionDir(home(), cwd, id, join);
-  if (direct !== null) {
-    try {
-      await stat(join(direct, SESSION_FILES.summary));
-      return direct;
-    } catch {
-      // Fall through to a scan (encoding edge cases, e.g. >255-byte cwds).
-    }
+  // sessionDir returns null for invalid ids — never path-join raw ids.
+  if (direct === null) return null;
+  try {
+    await stat(join(direct, SESSION_FILES.summary));
+    return direct;
+  } catch {
+    // Fall through to a scan (encoding edge cases, e.g. >255-byte cwds).
   }
   const root = join(home(), "sessions");
   try {

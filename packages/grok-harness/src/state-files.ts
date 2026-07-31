@@ -65,6 +65,10 @@ export type SessionSummary = {
   /** "fork" | "subagent" | "subagent_fork" | "worktree" | "" — sessions whose
    * kind starts with "subagent" are hidden by default in grok's own UI. */
   sessionKind: string;
+  parentSessionId: string;
+  hidden: boolean;
+  forkedAt: string;
+  worktreeLabel: string;
 };
 
 export function parseSummary(text: string): SessionSummary | null {
@@ -91,6 +95,10 @@ export function parseSummary(text: string): SessionSummary | null {
     gitCommit: str(o["head_commit"]),
     gitRootDir: str(o["git_root_dir"]),
     sessionKind: str(o["session_kind"]),
+    parentSessionId: str(o["parent_session_id"]),
+    hidden: o["hidden"] === true,
+    forkedAt: str(o["forked_at"]),
+    worktreeLabel: str(o["worktree_label"]),
   };
 }
 

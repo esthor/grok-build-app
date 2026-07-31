@@ -5,101 +5,65 @@ every app in this repo. If an app monitors or drives `grok` sessions, the
 types, parsers, and constants for those surfaces live here — not inlined in
 the app.
 
-Zero runtime dependencies, pure erasable TypeScript, runtime-agnostic (IO is
-injected where needed, so Bun servers, Vite frontends, and Tauri shells can
-all consume it).
+Zero runtime dependencies (library), pure erasable TypeScript, runtime-agnostic
+(IO is injected where needed).
 
 ```sh
 cd packages/grok-harness
 bun install && bun run check
-bun run verify   # conformance: replays every local ~/.grok session through
-                 # the parsers — 0 rejected lines, enum values in-union,
-                 # Tail equivalence under short-read drip-feed
+bun run verify   # replay every local ~/.grok session through the parsers
 ```
-
-`verify` is the schema's proof: run it after any grok-build upgrade to catch
-vocabulary drift (new event types and update kinds surface in its report
-before they bite an app).
-
-Consume by relative import (each app keeps its own toolchain; there is no
-root workspace by design):
 
 ```ts
-import { Tail, parseEventLine, parseSummary } from "../../packages/grok-harness/src/index.ts";
+import {
+  Tail, parseEventLine, parseSummary, parseUpdateLine,
+  HOOK_EVENT_NAMES, KNOWN_UPDATE_KINDS, frameLeaderMessage,
+} from "../../packages/grok-harness/src/index.ts";
 ```
 
-## The four interface surfaces
+## Surface map
 
-### 1. Session files on disk (`src/paths.ts`, `events.ts`, `updates.ts`, `state-files.ts`, `tail.ts`)
-
-Passive monitoring — no cooperation from the grok process required:
-
-| Path (under `$GROK_HOME`, default `~/.grok`) | Module | What it is |
-|---|---|---|
-| `active_sessions.json` | `state-files` | live TUI sessions (pid, cwd) — verify pid liveness, crash leaves stale entries |
-| `sessions/<enc-cwd>/<id>/summary.json` | `state-files` | identity: title, model, git head, timestamps, session kind |
-| `…/signals.json` | `state-files` | cumulative counters — **can lag hours**; seed slow values only |
-| `…/events.jsonl` (append-only) | `events` | telemetry log: turns, phases, tool durations/outcomes, permission decisions + waits, TTFT via `first_token` |
-| `…/updates.jsonl` (append-only) | `updates` | authoritative ACP transcript: message/thought chunks, tool calls with `rawInput` + `x.ai/tool` meta, `turn_completed` usage, running context estimate in `_meta.totalTokens` |
-| `…/hunk_records.jsonl` (append-only) | `state-files` | per-hunk line attribution (keep latest record per `hunkId`) |
-
-`Tail` implements the reader contract for the append-only files: byte-offset
-resume, torn-final-line buffering, skip-unparseable, truncation reset.
-
-### 2. Leader socket (`src/leader.ts`)
-
-Push-based monitoring and control: Unix socket at `$GROK_HOME/leader.sock`,
-u32 big-endian length-prefixed JSON frames (`frameLeaderMessage` /
-`LeaderDeframer`). Register, wait for `leader_ready`, then speak ACP. The
-multi-session roster rides `x.ai/sessions/list` + `x.ai/sessions/changed`.
-This is the intended seam for grokamp's real transport and any fleet view.
-
-### 3. Headless output (`src/headless.ts`)
-
-`grok -p --output-format streaming-json` NDJSON events and the final
-`--output-format json` result object, for apps that spawn runs.
-
-### 4. Tool taxonomy (`src/tools.ts`, `schema/tool_meta.schema.json`)
-
-Built-in tool names (pinned upstream by test) and the `x.ai/tool` metadata
-envelope. The vendored JSON Schema is the upstream artifact — regenerate
-types from it if you need more than the `CanonicalToolMeta` mirror.
+| Module | What it owns |
+|---|---|
+| `paths` | `$GROK_HOME`, session file names, cwd encode/decode, long-path `.cwd` marker, session-id validation |
+| `events` | Full `events.jsonl` vocabulary (~57 types): turns, phases, tools, permissions, MCP, goal/todo/laziness orchestration |
+| `updates` | Full `updates.jsonl` ACP + xAI `sessionUpdate` kinds (~50), usage/cost, tool meta, subagent/task/hook/scheduler accessors |
+| `state-files` | `active_sessions.json`, `summary.json`, `signals.json`, `hunk_records.jsonl` |
+| `tail` | Byte-offset JSONL tailer (short-read + UTF-8 safe), injected `TailIo` |
+| `leader` | Socket framing, register/ready, control commands, roster parse |
+| `headless` | `grok -p` streaming-json NDJSON + final json result |
+| `tools` | Built-in tool names + `CanonicalToolMeta`; vendored JSON Schema |
+| `hooks` | Hook event names (with aliases), config map parser |
+| `methods` | ACP + `x.ai/*` method name constants |
 
 ## Semantics you will get wrong without reading this
 
-- **Two incompatible `inputTokens` conventions.** `updates.jsonl`
+- **Two incompatible `inputTokens` conventions.** updates.jsonl
   `turn_completed.usage.inputTokens` INCLUDES cache reads; headless
   `usage.input_tokens` EXCLUDES them. Never sum across surfaces.
-- **Cost is fail-closed.** `costUsdTicks` (1e10 ticks = $1) absent, or
-  `usageIsIncomplete`/`costIsPartial` set, means UNKNOWN — never render $0.
-- **`_meta.totalTokens` is context occupancy, not spend.** It is the
-  harness's own bytes/4 estimate of the current conversation, and it drops
-  on compaction. Ratchet it yourself if you want an odometer.
-- **`signals.json` goes stale mid-session** (observed hours behind). Fold
-  the JSONL streams for anything that moves.
-- **`phase_changed` dominates events.jsonl** (~90%+ of lines). Debounce.
-- **Subagent sessions are hidden by default** (`session_kind` starting with
-  `"subagent"`); decide explicitly whether to surface them.
-- **Both `run_terminal_cmd` and `run_terminal_command` exist** upstream;
-  the live wire currently emits the latter. MCP tools are `server__tool`.
-- **Small state files are atomically replaced** — watchers must re-open by
-  path (new inode); JSONL appends can tear the final line — skip and go on.
+- **Cost is fail-closed.** Use `effectiveCostUsdTicks(usage)` — absent or
+  incomplete/partial means UNKNOWN, never $0.
+- **`_meta.totalTokens` is context occupancy**, not spend; drops on compaction.
+- **`signals.json` can lag hours** — seed slow values only; fold JSONL for live counters.
+- **`phase_changed` dominates events.jsonl** (~90%+). Debounce.
+- **Subagent sessions** have `session_kind` starting with `"subagent"`; decide whether to surface them.
+- **Both `run_terminal_cmd` and `run_terminal_command` exist** upstream.
+- **Roster notifications** may use `_x.ai/sessions/changed` (underscore prefix).
+- **Small state files are atomically replaced** (new inode); JSONL can tear the final line.
 
 ## Provenance
 
-Modeled from the grok-build source tree (`xai-file-utils` events,
-`xai-grok-shell` storage/leader/roster, `xai-grok-pager` headless,
-`xai-grok-tools` taxonomy) and verified against live `~/.grok` session data
-on 2026-07-29. Source monorepo rev at time of modeling:
-`2a818575225183d8ca915f5632a09b8067b5156a` (grok-build `SOURCE_REV`);
-`schema/tool_meta.schema.json` is vendored verbatim from
-`crates/codegen/xai-grok-tools/schema/tool_meta.schema.json` at that rev.
-These are UNOFFICIAL mirrors of undocumented interfaces: when grok-build
-ships a change, update this package first and let the apps inherit it.
+Modeled from grok-build (`xai-file-utils` events, `xai-grok-shell`
+storage/leader/roster/hooks notifications, `xai-grok-pager` headless,
+`xai-grok-tools` taxonomy, `xai-grok-hooks`) and verified against live
+`~/.grok` data. Source pin: `SOURCE_REV 2a818575225183d8ca915f5632a09b8067b5156a`.
+`schema/tool_meta.schema.json` is vendored verbatim from that rev.
+
+These are UNOFFICIAL mirrors of interfaces that can change: when grok-build
+ships a change, update this package first and let apps inherit it.
+`bun run verify` is the drift detector.
 
 ## Consumers
 
-- `apps/grokmeter` — disk-surface tailing (collector `src/collectors/grok.ts`).
-- `apps/grokamp` — pending: its `src/agent/protocol.ts` documents the
-  adapter seam ("translate grok-build's ACP messages"); the leader module
-  here is that transport's vocabulary.
+- `apps/grokmeter` — disk-surface tailing
+- `apps/grokamp` — leader module is the real-transport vocabulary

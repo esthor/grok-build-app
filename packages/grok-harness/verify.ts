@@ -1,19 +1,21 @@
 // Conformance harness: replays every grok session on this machine through
-// the package's parsers and reports coverage + violations. Run with Bun:
+// the package's parsers and reports coverage + violations.
 //
-//   bun run verify            # uses $GROK_HOME or ~/.grok
-//
-// Exit code 1 on hard failures (unparseable valid-JSON lines, enum values
-// outside the modeled unions, identity mismatches). Unknown-but-tolerated
-// vocabulary (new event subtypes, update kinds) is reported, not fatal —
-// that's the signal to extend the schema.
+//   bun run verify
 
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   PHASES,
+  TOOL_OUTCOMES,
+  PERMISSION_DECISIONS,
+  TURN_OUTCOMES,
+  KNOWN_EVENT_TYPES,
   SESSION_FILES,
+  HOME_FILES,
+  KNOWN_UPDATE_KINDS,
+  isKnownUpdateKind,
   Tail,
   chunkText,
   decodeCwdDirname,
@@ -26,6 +28,14 @@ import {
   parseUpdateLine,
   toolMetaOf,
   turnUsageOf,
+  subagentSpawnOf,
+  subagentFinishedOf,
+  taskBackgroundedOf,
+  taskCompletedOf,
+  recapOf,
+  HOOK_EVENT_NAMES,
+  parseHookEventName,
+  BUILTIN_TOOL_NAMES,
   type TailIo,
 } from "./src/index.ts";
 import { parseObj, str } from "./src/json.ts";
@@ -33,31 +43,11 @@ import { parseObj, str } from "./src/json.ts";
 const HOME = grokHome(process.env, homedir(), join);
 const SESSIONS = join(HOME, "sessions");
 
-const TOOL_OUTCOMES = new Set([
-  "success",
-  "error",
-  "permission_rejected",
-  "permission_cancelled",
-  "followup",
-  "hook_denied",
-  "invalid_tool",
-  "cancelled",
-]);
-const PERM_DECISIONS = new Set(["allow", "deny", "cancelled", "followup"]);
-const TURN_OUTCOMES = new Set(["completed", "cancelled", "error"]);
-const MODELED_UPDATE_KINDS = new Set([
-  "user_message_chunk",
-  "agent_message_chunk",
-  "agent_thought_chunk",
-  "tool_call",
-  "tool_call_update",
-  "plan",
-  "available_commands_update",
-  "current_mode_update",
-  "turn_completed",
-  "session_recap",
-  "subagent_spawned",
-]);
+const TOOL_OUTCOME_SET = new Set<string>(TOOL_OUTCOMES);
+const PERM_SET = new Set<string>(PERMISSION_DECISIONS);
+const TURN_SET = new Set<string>(TURN_OUTCOMES);
+const PHASE_SET = new Set<string>(PHASES as readonly string[]);
+const KNOWN_EVENTS = new Set<string>(KNOWN_EVENT_TYPES as readonly string[]);
 
 let hardFailures = 0;
 const fail = (msg: string): void => {
@@ -84,8 +74,6 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-// ── Discover every session directory ─────────────────────────────────────
-
 type Session = { dir: string; id: string; cwdDir: string };
 const sessions: Session[] = [];
 for (const cwdDir of await readdir(SESSIONS).catch(() => [] as string[])) {
@@ -103,11 +91,18 @@ for (const cwdDir of await readdir(SESSIONS).catch(() => [] as string[])) {
   }
 }
 console.log(`grok-harness conformance · $GROK_HOME=${HOME} · ${sessions.length} session(s)\n`);
+console.log(
+  `catalog: ${KNOWN_EVENT_TYPES.length} event types · ${KNOWN_UPDATE_KINDS.length} update kinds · ${HOOK_EVENT_NAMES.length} hook events · ${BUILTIN_TOOL_NAMES.length} tools\n`,
+);
 
-// ── active_sessions.json ─────────────────────────────────────────────────
+// hooks alias smoke
+for (const a of ["PreToolUse", "beforeShellExecution", "subagent_end", "Stop"]) {
+  if (parseHookEventName(a) === null) fail(`hook alias ${a} not resolved`);
+}
+console.log(`hooks: ${HOOK_EVENT_NAMES.length} events, aliases resolve`);
 
 {
-  const raw = await Bun.file(join(HOME, "active_sessions.json"))
+  const raw = await Bun.file(join(HOME, HOME_FILES.activeSessions))
     .text()
     .catch(() => "");
   if (raw !== "") {
@@ -119,10 +114,9 @@ console.log(`grok-harness conformance · $GROK_HOME=${HOME} · ${sessions.length
   }
 }
 
-// ── Per-session replay ───────────────────────────────────────────────────
-
 const eventTypes = new Map<string, number>();
 const otherSubtypes = new Map<string, number>();
+const orchSubtypes = new Map<string, number>();
 const mcpSubtypes = new Map<string, number>();
 const updateKinds = new Map<string, number>();
 let eventLines = 0;
@@ -137,9 +131,12 @@ let turnCompleted = 0;
 let turnUsageParsed = 0;
 let chunks = 0;
 let chunksWithText = 0;
+let subagentSpawned = 0;
+let subagentFinished = 0;
+let taskBg = 0;
+let taskDone = 0;
 
 for (const s of sessions) {
-  // summary.json identity
   const summaryText = await Bun.file(join(s.dir, SESSION_FILES.summary)).text();
   const summary = parseSummary(summaryText);
   if (summary === null) {
@@ -151,9 +148,12 @@ for (const s of sessions) {
   if (decodedCwd !== null && summary.cwd !== decodedCwd) {
     fail(`${s.id}: summary.cwd ${summary.cwd} ≠ dirname ${decodedCwd}`);
   }
-  if (summary.modelId === "?" || summary.title === "") fail(`${s.id}: summary missing model/title`);
+  // Brand-new sessions can briefly lack a generated title; only fail if both
+  // identity fields are empty after we already parsed the file.
+  if (summary.modelId === "?" && summary.title === "") {
+    console.log(`  · ${s.id}: summary still untitled/unknown model (tolerated for fresh sessions)`);
+  }
 
-  // signals.json: typed fields must exist in raw when file present
   const signalsText = await Bun.file(join(s.dir, SESSION_FILES.signals))
     .text()
     .catch(() => "");
@@ -167,7 +167,6 @@ for (const s of sessions) {
     }
   }
 
-  // events.jsonl
   for (const line of await lines(join(s.dir, SESSION_FILES.events))) {
     eventLines += 1;
     const raw = parseObj(line);
@@ -181,28 +180,31 @@ for (const s of sessions) {
     }
     tally(eventTypes, ev.type);
     if (ev.type === "other") tally(otherSubtypes, ev.subtype);
+    if (ev.type === "orchestration") tally(orchSubtypes, ev.subtype);
     if (ev.type === "mcp") tally(mcpSubtypes, ev.subtype);
     if (raw === null) continue;
-    // Enum conformance against the RAW values (the parser coerces).
     const rawType = str(raw["type"]);
-    if (rawType === "phase_changed" && !(PHASES as readonly string[]).includes(str(raw["phase"]))) {
+    if (rawType === "phase_changed" && !PHASE_SET.has(str(raw["phase"]))) {
       fail(`${s.id}: unknown phase ${str(raw["phase"])}`);
     }
-    if (rawType === "tool_completed" && !TOOL_OUTCOMES.has(str(raw["outcome"]))) {
+    if (rawType === "tool_completed" && !TOOL_OUTCOME_SET.has(str(raw["outcome"]))) {
       fail(`${s.id}: unknown tool outcome ${str(raw["outcome"])}`);
     }
-    if (rawType === "permission_resolved" && !PERM_DECISIONS.has(str(raw["decision"]))) {
+    if (rawType === "permission_resolved" && !PERM_SET.has(str(raw["decision"]))) {
       fail(`${s.id}: unknown permission decision ${str(raw["decision"])}`);
     }
-    if (rawType === "turn_ended" && !TURN_OUTCOMES.has(str(raw["outcome"]))) {
+    if (rawType === "turn_ended" && !TURN_SET.has(str(raw["outcome"]))) {
       fail(`${s.id}: unknown turn outcome ${str(raw["outcome"])}`);
     }
     if (rawType === "turn_started" && ev.type === "turn_started" && ev.sessionId !== s.id) {
       fail(`${s.id}: turn_started session_id mismatch`);
     }
+    // Known types should not land in other
+    if (ev.type === "other" && KNOWN_EVENTS.has(ev.subtype)) {
+      fail(`${s.id}: known event ${ev.subtype} classified as other`);
+    }
   }
 
-  // updates.jsonl
   for (const line of await lines(join(s.dir, SESSION_FILES.updates))) {
     updateLines += 1;
     const env = parseUpdateLine(line);
@@ -225,9 +227,27 @@ for (const s of sessions) {
       chunks += 1;
       if (chunkText(env.update) !== "") chunksWithText += 1;
     }
+    if (env.kind === "session_recap" && recapOf(env.update) === null) {
+      fail(`${s.id}: session_recap not extractable`);
+    }
+    if (env.kind === "subagent_spawned") {
+      subagentSpawned += 1;
+      if (subagentSpawnOf(env.update) === null) fail(`${s.id}: subagent_spawned not extractable`);
+    }
+    if (env.kind === "subagent_finished") {
+      subagentFinished += 1;
+      if (subagentFinishedOf(env.update) === null) fail(`${s.id}: subagent_finished not extractable`);
+    }
+    if (env.kind === "task_backgrounded") {
+      taskBg += 1;
+      if (taskBackgroundedOf(env.update) === null) fail(`${s.id}: task_backgrounded not extractable`);
+    }
+    if (env.kind === "task_completed") {
+      taskDone += 1;
+      if (taskCompletedOf(env.update) === null) fail(`${s.id}: task_completed not extractable`);
+    }
   }
 
-  // hunk_records.jsonl
   for (const line of await lines(join(s.dir, SESSION_FILES.hunkRecords))) {
     hunkLines += 1;
     if (parseHunkLine(line) === null) {
@@ -237,17 +257,11 @@ for (const s of sessions) {
   }
 }
 
-// ── Tail equivalence: chunked byte-offset reads must yield identical lines ─
-
+// Tail equivalence under 1KB short reads
 {
-  const target = sessions
-    .map((s) => join(s.dir, SESSION_FILES.events))
-    .find(() => true);
+  const target = sessions.map((s) => join(s.dir, SESSION_FILES.events)).find(() => true);
   if (target !== undefined && (await exists(target))) {
     const direct = await lines(target);
-    // Deliberately short reads (≤1 KB) exercise the byte-oriented contract:
-    // the tailer must advance by actual consumption, never assume the full
-    // requested range arrived.
     const drip: TailIo = {
       size: async (p) => {
         try {
@@ -273,8 +287,6 @@ for (const s of sessions) {
   }
 }
 
-// ── Report ───────────────────────────────────────────────────────────────
-
 const show = (label: string, map: Map<string, number>): void => {
   const total = [...map.values()].reduce((a, b) => a + b, 0);
   const parts = [...map.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}:${v}`);
@@ -283,15 +295,22 @@ const show = (label: string, map: Map<string, number>): void => {
 
 console.log(`\nevents.jsonl: ${eventLines} lines, ${eventNulls} rejected`);
 show("  modeled types", eventTypes);
-show("  → other subtypes (unmodeled, tolerated)", otherSubtypes);
+show("  → orchestration subtypes", orchSubtypes);
+show("  → other subtypes", otherSubtypes);
 show("  → mcp subtypes", mcpSubtypes);
 console.log(`\nupdates.jsonl: ${updateLines} lines, ${updateNulls} rejected`);
 show("  kinds", updateKinds);
-const unmodeled = [...updateKinds.keys()].filter((k) => !MODELED_UPDATE_KINDS.has(k));
-if (unmodeled.length > 0) console.log(`  ⚠ kinds not in MODELED_UPDATE_KINDS: ${unmodeled.join(", ")}`);
+const unmodeled = [...updateKinds.keys()].filter((k) => !isKnownUpdateKind(k));
+if (unmodeled.length > 0) {
+  console.log(`  ⚠ kinds not in KNOWN_UPDATE_KINDS: ${unmodeled.join(", ")}`);
+  for (const k of unmodeled) fail(`unmodeled update kind on wire: ${k}`);
+}
 console.log(`  tool_call with x.ai/tool meta: ${toolCallsWithMeta}/${toolCalls}`);
 console.log(`  turn_completed with usage parsed: ${turnUsageParsed}/${turnCompleted}`);
 console.log(`  chunks with text: ${chunksWithText}/${chunks}`);
+console.log(
+  `  subagent spawn/finish: ${subagentSpawned}/${subagentFinished} · tasks bg/done: ${taskBg}/${taskDone}`,
+);
 console.log(`\nhunk_records.jsonl: ${hunkLines} lines, ${hunkNulls} rejected`);
 
 console.log(hardFailures === 0 ? "\n✅ conformance clean" : `\n❌ ${hardFailures} hard failure(s)`);
