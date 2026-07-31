@@ -30,18 +30,41 @@ const grokHome = (): string => process.env["GROK_HOME"] ?? join(homedir(), ".gro
 const SESSION_ID_RE = /^[0-9a-fA-F-]{8,64}$/;
 
 // ── Byte-offset line tail with torn-line tolerance ───────────────────────
+// Byte-oriented on purpose: offsets always count BYTES (stat/slice space),
+// never decoded characters — a UTF-16 length would drift past the first
+// non-ASCII byte — and only complete lines are decoded, so a multi-byte
+// character split across a poll boundary can't be corrupted.
+
+const NEWLINE = 0x0a;
+const BACKFILL_BYTES = 128 * 1024;
+
+async function readBytes(path: string, start: number, end: number): Promise<Uint8Array> {
+  return new Uint8Array(await Bun.file(path).slice(start, end).arrayBuffer());
+}
 
 class Tail {
   private readonly path: string;
+  private readonly startAtEnd: boolean;
   private offset: number;
-  private buf = "";
+  private buf = new Uint8Array(0);
 
   constructor(path: string, startAtEnd: boolean) {
     this.path = path;
-    this.offset = startAtEnd ? -1 : 0; // -1: resolve to EOF on first poll
+    this.startAtEnd = startAtEnd;
+    this.offset = startAtEnd ? -1 : 0; // -1: resolve near EOF on first poll
   }
 
   async poll(onLine: (line: string) => void): Promise<void> {
+    // Files can be replaced between the stat and the read; that must cost
+    // one tick, never an unhandled rejection in the caller's timer.
+    try {
+      await this.pollInner(onLine);
+    } catch {
+      // Transient disk race; state only advances after successful reads.
+    }
+  }
+
+  private async pollInner(onLine: (line: string) => void): Promise<void> {
     let size: number;
     try {
       size = (await stat(this.path)).size;
@@ -49,30 +72,53 @@ class Tail {
       return;
     }
     if (this.offset === -1) {
-      // First contact: start 128 KB back so the deck has recent history.
-      this.offset = Math.max(0, size - 128 * 1024);
+      // First contact: start 128 KB back so the deck has recent history,
+      // probing forward to a line boundary so we never start mid-line.
+      this.offset = Math.max(0, size - BACKFILL_BYTES);
       if (this.offset > 0) {
-        // Skip the first (probably partial) line.
-        const text = await Bun.file(this.path).slice(this.offset, size).text();
-        const nl = text.indexOf("\n");
-        this.offset += nl >= 0 ? nl + 1 : text.length;
+        while (this.offset < size) {
+          const probe = await readBytes(this.path, this.offset, size);
+          if (probe.length === 0) break;
+          const nl = probe.indexOf(NEWLINE);
+          if (nl >= 0) {
+            this.offset += nl + 1;
+            break;
+          }
+          this.offset += probe.length;
+        }
       }
     }
     if (size < this.offset) {
-      this.offset = 0; // truncated / rotated
-      this.buf = "";
+      // Truncated or rotated: return to this tail's own mode (a
+      // start-at-end tail must not replay the whole replacement file).
+      this.offset = this.startAtEnd ? -1 : 0;
+      this.buf = new Uint8Array(0);
+      if (this.offset === -1) {
+        await this.pollInner(onLine);
+        return;
+      }
     }
     if (size === this.offset) return;
-    const chunk = await Bun.file(this.path).slice(this.offset, size).text();
-    this.offset = size;
-    this.buf += chunk;
-    let nl = this.buf.indexOf("\n");
+
+    const chunk = await readBytes(this.path, this.offset, size);
+    if (chunk.length === 0) return;
+    this.offset += chunk.length;
+
+    const joined = new Uint8Array(this.buf.length + chunk.length);
+    joined.set(this.buf, 0);
+    joined.set(chunk, this.buf.length);
+    this.buf = joined;
+
+    const decoder = new TextDecoder();
+    let start = 0;
+    let nl = this.buf.indexOf(NEWLINE, start);
     while (nl >= 0) {
-      const line = this.buf.slice(0, nl).trim();
-      this.buf = this.buf.slice(nl + 1);
+      const line = decoder.decode(this.buf.slice(start, nl)).trim();
       if (line !== "") onLine(line);
-      nl = this.buf.indexOf("\n");
+      start = nl + 1;
+      nl = this.buf.indexOf(NEWLINE, start);
     }
+    this.buf = this.buf.slice(start);
   }
 }
 
@@ -363,7 +409,9 @@ class SessionWatch {
       sandbox: this.sandbox,
       live,
       startedAt: this.createdAt,
-      updatedAt: Date.now(),
+      // A live session is being updated right now; a disk-fallback session's
+      // honest "last activity" is what summary.json recorded, not "now".
+      updatedAt: live ? Date.now() : this.updatedAt,
       phase: this.permPending ? "permission_prompt" : this.phase,
       turnCount: this.turnCount,
       userMessages: this.userMessages,
@@ -474,7 +522,17 @@ async function findSessionDir(cwd: string, sessionId: string): Promise<string | 
 }
 
 /** Most recently touched session on disk, for when nothing is live. */
+/** The fallback scan readdirs every cwd bucket and stats every summary —
+ * hundreds of syscalls. The answer rarely changes while idle, and idle is
+ * where the deck lives, so cache it briefly. */
+let recentScanCache: { at: number; value: { dir: string; id: string; cwd: string } | null } = {
+  at: 0,
+  value: null,
+};
+const RECENT_SCAN_TTL_MS = 15_000;
+
 async function findRecentSession(): Promise<{ dir: string; id: string; cwd: string } | null> {
+  if (Date.now() - recentScanCache.at < RECENT_SCAN_TTL_MS) return recentScanCache.value;
   const root = join(grokHome(), "sessions");
   let best: { dir: string; id: string; cwd: string; mtime: number } | null = null;
   let cwdDirs: string[] = [];
@@ -511,7 +569,9 @@ async function findRecentSession(): Promise<{ dir: string; id: string; cwd: stri
       }
     }
   }
-  return best === null ? null : { dir: best.dir, id: best.id, cwd: best.cwd };
+  const value = best === null ? null : { dir: best.dir, id: best.id, cwd: best.cwd };
+  recentScanCache = { at: Date.now(), value };
+  return value;
 }
 
 // ── Public entry ─────────────────────────────────────────────────────────
@@ -586,9 +646,14 @@ export function startGrok(emit: Emit): void {
   const discoverOnce = (): void => {
     if (discovering) return;
     discovering = true;
-    void discover().finally(() => {
-      discovering = false;
-    });
+    void discover()
+      .catch(() => {
+        // A transient FS race must cost one tick, never the process:
+        // unhandled rejections are fatal under Bun.
+      })
+      .finally(() => {
+        discovering = false;
+      });
   };
   discoverOnce();
   setInterval(discoverOnce, 2000);
@@ -610,14 +675,19 @@ export function startGrok(emit: Emit): void {
         emit.feed(fresh);
       }
       emit.agent(w.snapshot(watchLive));
-    })().finally(() => {
-      tailing = false;
-    });
+    })()
+      .catch(() => {
+        // Skip the tick on a transient FS race; never surface an unhandled
+        // rejection from a timer body.
+      })
+      .finally(() => {
+        tailing = false;
+      });
   }, 900);
 
   // Meta refresh (summary/signals are small atomic files).
   setInterval(() => {
     const w = watch;
-    if (w !== null) void w.refreshMeta();
+    if (w !== null) void w.refreshMeta().catch(() => {});
   }, 3000);
 }

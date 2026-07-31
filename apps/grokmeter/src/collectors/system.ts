@@ -39,6 +39,14 @@ function every(ms: number, sample: () => Promise<void>): void {
 }
 
 export function startSystem(emit: Emit): void {
+  // Every probe below is macOS-specific. On other hosts, emitting the
+  // zero-initialized snapshot would dress "unavailable" up as real
+  // telemetry — so emit nothing and let the widgets show their absence
+  // states instead.
+  if (process.platform !== "darwin") {
+    console.log("system collector: non-macOS host, system stats unavailable");
+    return;
+  }
   const state = {
     hostname: hostname(),
     os: "macOS",

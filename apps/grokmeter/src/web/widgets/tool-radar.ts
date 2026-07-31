@@ -1,7 +1,7 @@
 // TOOL RADAR — polar plot of per-tool call volume with a rotating sweep.
 // New calls ping at their spoke. Honest data, decorative motion.
 
-import { cssVar, el, toolAbbrev } from "../lib.ts";
+import { cssVar, el, frameCanvas, toolAbbrev } from "../lib.ts";
 import type { WidgetDef } from "../widget.ts";
 
 type Ping = { angle: number; at: number };
@@ -61,18 +61,10 @@ export const toolRadarWidget: WidgetDef = {
     });
 
     const tick = (now: number): void => {
-      const dpr = window.devicePixelRatio || 1;
+      const ctx = frameCanvas(canvas);
+      if (ctx === null) return;
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
-      if (w === 0 || h === 0) return;
-      if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
-        canvas.width = w * dpr;
-        canvas.height = h * dpr;
-      }
-      const ctx = canvas.getContext("2d");
-      if (ctx === null) return;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, w, h);
 
       const cx = w / 2;
       const cy = h / 2 - 4;
