@@ -62,6 +62,25 @@ export interface WszSkin {
 /** the currently worn .wsz, if any (drives the HEAD UNIT window) */
 export const wszStore = new Store<WszSkin | null>(null);
 
+/** ImageBitmaps hold decoded graphics memory; release them deterministically */
+export function disposeWsz(skin: WszSkin | null): void {
+  if (skin === null) {
+    return;
+  }
+  for (const sheet of Object.values(skin.sheets)) {
+    sheet?.close();
+  }
+}
+
+/** the only writer of wszStore: closes the previous skin's bitmaps first */
+export function setWornWsz(next: WszSkin | null): void {
+  const prev = wszStore.state;
+  if (prev !== null && prev !== next) {
+    disposeWsz(prev);
+  }
+  wszStore.setState(() => next);
+}
+
 /** case-insensitive, directory-agnostic, last-entry-wins zip lookup */
 export function pickEntry(
   files: Readonly<Record<string, Uint8Array>>,
@@ -294,6 +313,8 @@ export function deriveGrokampSkin(wsz: WszSkin): Skin {
 
 const WSZ_KEY = "grokamp.v1.wsz";
 const MAX_PERSIST_BYTES = 1_500_000;
+/** base64 expands 4/3 and JSON adds metadata; bound what actually hits storage */
+const MAX_SERIALIZED_CHARS = 2_200_000;
 
 function toBase64(bytes: Uint8Array): string {
   let bin = "";
@@ -312,14 +333,20 @@ function fromBase64(b64: string): Uint8Array {
   return out;
 }
 
-export function persistWsz(bytes: Uint8Array, name: string): void {
+/** returns false when the skin is worn session-only (too big / storage full) */
+export function persistWsz(bytes: Uint8Array, name: string): boolean {
   if (bytes.length > MAX_PERSIST_BYTES) {
-    return; // too big for localStorage; skin lasts for the session only
+    return false;
   }
   try {
-    window.localStorage.setItem(WSZ_KEY, JSON.stringify({ name, b64: toBase64(bytes) }));
+    const payload = JSON.stringify({ name, b64: toBase64(bytes) });
+    if (payload.length > MAX_SERIALIZED_CHARS) {
+      return false;
+    }
+    window.localStorage.setItem(WSZ_KEY, payload);
+    return true;
   } catch {
-    // storage full — non-fatal
+    return false; // quota exceeded — non-fatal
   }
 }
 
@@ -334,7 +361,7 @@ export async function rehydrateWsz(): Promise<WszSkin | null> {
       return null;
     }
     const skin = await loadWsz(fromBase64(parsed.b64), parsed.name);
-    wszStore.setState(() => skin);
+    setWornWsz(skin);
     return skin;
   } catch {
     return null;
@@ -347,5 +374,5 @@ export function forgetWsz(): void {
   } catch {
     // fine
   }
-  wszStore.setState(() => null);
+  setWornWsz(null);
 }

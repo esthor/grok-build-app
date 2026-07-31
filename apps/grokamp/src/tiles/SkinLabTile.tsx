@@ -6,7 +6,14 @@ import { buildVis, lerpHex } from "../skins/ramp";
 import { parseSkin, skinToJson } from "../skins/runtime";
 import type { Skin, SkinColors } from "../skins/types";
 import { SKIN_COLOR_KEYS } from "../skins/types";
-import { deriveGrokampSkin, forgetWsz, loadWsz, persistWsz, wszStore } from "../skins/wsz";
+import {
+  deriveGrokampSkin,
+  disposeWsz,
+  forgetWsz,
+  loadWsz,
+  persistWsz,
+  setWornWsz,
+} from "../skins/wsz";
 import { pushLog } from "../state/session";
 import {
   allSkins,
@@ -153,13 +160,16 @@ export function SkinLabTile(): ReactNode {
     try {
       const wsz = await loadWsz(bytes, name);
       if (wsz.sheets.main === undefined) {
+        disposeWsz(wsz); // release the bitmaps we won't be wearing
         pushLog("sys", `wsz rejected: no main.bmp in ${name}`, "err");
         return;
       }
-      wszStore.setState(() => wsz);
+      setWornWsz(wsz);
       upsertCustomSkin(deriveGrokampSkin(wsz));
       setWindowOpen("head", true);
-      persistWsz(bytes, name);
+      if (!persistWsz(bytes, name)) {
+        pushLog("sys", "skin too large to persist — worn for this session only", "warn");
+      }
       pushLog("sys", `wearing ${name} — head unit online`, "ok");
     } catch {
       pushLog("sys", `wsz rejected: ${name} is not a readable zip`, "err");
