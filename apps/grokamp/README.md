@@ -67,7 +67,10 @@ workspace is a link.
 
 `Z X C V B` prev/play/pause/stop/next (the sacred row) · `S` shuffle ·
 `R` repeat · `L` eject/queue a task · `Ctrl+D` double size · `Alt+1..9`
-toggle windows (9 = the .wsz head unit) · **type `llama`** for the tribute (yes, the l's queue tasks;
+toggle windows (9 = the .wsz head unit). In the Museum: **↑/↓ preview skins
+in-app**, Enter keeps one. The llama egg plays an original synth jingle —
+Winamp's actual DEMO.MP3 is a copyrighted recording, so ours bleats its own
+fanfare (`src/agent/jingle.ts`). · **type `llama`** for the tribute (yes, the l's queue tasks;
 the original NULLSOFT egg had the same hazard — that's why it was
 N-U-L-Esc-L-Esc-S-O-F-T. Lore-accurate. Not a bug.)
 

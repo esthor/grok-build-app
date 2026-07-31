@@ -1084,6 +1084,11 @@ html[data-scanlines="on"] .lcd::after {
   font-size: 12px;
 }
 
+.museum-list:focus {
+  outline: 1px solid var(--sk-lcdDim);
+  outline-offset: -1px;
+}
+
 .museum-row {
   display: flex;
   align-items: center;
@@ -1091,6 +1096,15 @@ html[data-scanlines="on"] .lcd::after {
   gap: 8px;
   padding: 2px 8px;
   line-height: 20px;
+  cursor: default;
+}
+
+.museum-row[data-selected="yes"] {
+  background: var(--sk-listSelBg);
+}
+
+.museum-row[data-selected="yes"] .museum-name {
+  color: var(--sk-listCurrent);
 }
 
 .museum-name {

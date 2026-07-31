@@ -4,6 +4,7 @@ import { pushLog } from "../state/session";
 import { upsertCustomSkin } from "../state/settings";
 import { setWindowOpen } from "../state/windows";
 import { buildVis, lerpHex } from "./ramp";
+import { applySkin } from "./runtime";
 import type { Skin, SkinColors } from "./types";
 
 /**
@@ -409,6 +410,27 @@ export async function wearWsz(bytes: Uint8Array, name: string): Promise<boolean>
     return true;
   } catch {
     pushLog("sys", `wsz rejected: ${name} is not a readable zip`, "err");
+    return false;
+  }
+}
+
+/**
+ * Temporary wear for museum browsing: dresses the head unit + deck but
+ * persists nothing and registers no custom skin — a reload reverts.
+ * WEAR/Enter commits via wearWsz.
+ */
+export async function previewWsz(bytes: Uint8Array, name: string): Promise<boolean> {
+  try {
+    const wsz = await loadWsz(bytes, name);
+    if (wsz.sheets.main === undefined) {
+      disposeWsz(wsz);
+      return false;
+    }
+    setWornWsz(wsz);
+    applySkin(deriveGrokampSkin(wsz));
+    setWindowOpen("head", true);
+    return true;
+  } catch {
     return false;
   }
 }

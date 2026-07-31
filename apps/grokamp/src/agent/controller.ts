@@ -1,3 +1,4 @@
+import { playLlamaJingle } from "./jingle";
 import { pick } from "./rng";
 import {
   appendStream,
@@ -323,5 +324,6 @@ export function addRandomTask(): void {
 
 export function whipTheLlama(): void {
   patchSession({ llamaUntil: Date.now() + 9000 });
+  playLlamaJingle();
   pushLog("sys", "🦙 IT REALLY WHIPS THE LLAMA'S ASS — respect to 1997", "ok");
 }
