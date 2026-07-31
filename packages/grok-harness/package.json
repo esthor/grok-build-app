@@ -1,12 +1,13 @@
 {
   "name": "@grok-build-app/grok-harness",
   "version": "0.1.0",
-  "description": "Single source of truth for grok-build CLI session interfaces: disk session files, ACP update stream, leader socket, headless output, tool taxonomy.",
+  "description": "Single source of truth for grok-build CLI session interfaces: disk session files, ACP update stream, leader socket, headless output, tool taxonomy, hooks, and full field reference.",
   "type": "module",
   "private": true,
   "scripts": {
     "check": "tsc -p tsconfig.json && tsc -p tsconfig.verify.json",
-    "verify": "bun verify.ts"
+    "verify": "bun verify.ts",
+    "reference": "python3 scripts/generate-reference.py"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",

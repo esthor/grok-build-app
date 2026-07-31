@@ -16,3 +16,9 @@ interfaces in this repository.
 
 `paths`, `events`, `updates`, `state-files`, `tail`, `leader`, `headless`,
 `tools`, `hooks`, `methods`, `json`.
+
+## Full reference
+
+- `REFERENCE.md` is the end-to-end field map of every grok-build interface.
+- After a grok-build upgrade: regenerate it (`bun run reference` with
+  `GROK_BUILD_SRC` set), then fix package parsers until `bun run verify` is clean.

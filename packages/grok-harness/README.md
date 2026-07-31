@@ -1,7 +1,11 @@
 # @grok-build-app/grok-harness
 
 **The single source of truth for grok-build CLI session interfaces** used by
-every app in this repo. If an app monitors or drives `grok` sessions, the
+every app in this repo.
+
+**Full field-level map:** [REFERENCE.md](./REFERENCE.md) — every disk path,
+events.jsonl type, updates.jsonl kind, leader message, hook event, tool name,
+and `x.ai/*` method, generated from grok-build `SOURCE_REV`. If an app monitors or drives `grok` sessions, the
 types, parsers, and constants for those surfaces live here — not inlined in
 the app.
 
@@ -12,6 +16,8 @@ Zero runtime dependencies (library), pure erasable TypeScript, runtime-agnostic
 cd packages/grok-harness
 bun install && bun run check
 bun run verify   # replay every local ~/.grok session through the parsers
+# regenerate REFERENCE.md from a local grok-build checkout:
+#   GROK_BUILD_SRC=~/dev/tools/grok-build bun run reference
 ```
 
 ```ts
@@ -56,7 +62,7 @@ import {
 Modeled from grok-build (`xai-file-utils` events, `xai-grok-shell`
 storage/leader/roster/hooks notifications, `xai-grok-pager` headless,
 `xai-grok-tools` taxonomy, `xai-grok-hooks`) and verified against live
-`~/.grok` data. Source pin: `SOURCE_REV 2a818575225183d8ca915f5632a09b8067b5156a`.
+`~/.grok` data. Source pin: `SOURCE_REV 8d69c91f02bcacf01e98d5aebbf2f92547c45738`.
 `schema/tool_meta.schema.json` is vendored verbatim from that rev.
 
 These are UNOFFICIAL mirrors of interfaces that can change: when grok-build
