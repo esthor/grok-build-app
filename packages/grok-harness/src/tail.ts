@@ -6,23 +6,35 @@
 // corrupt. Readers buffer partial tails, skip unparseable lines, and re-stat
 // by path because small state files are atomically replaced (new inode).
 //
+// The tailer is byte-oriented on purpose: it advances its offset by the
+// bytes ACTUALLY returned (so short reads are safe) and only decodes
+// complete lines (so multi-byte UTF-8 split across a poll boundary can't be
+// corrupted by premature decoding).
+//
 // IO is injected so the package stays runtime-agnostic: Bun, Node, or a
 // Tauri/Rust bridge can all provide TailIo.
+
+// lib:ESNext-only package; TextDecoder exists in every target runtime.
+declare class TextDecoder {
+  decode(input: Uint8Array): string;
+}
 
 export type TailIo = {
   /** Size of the file in bytes, or null if it does not exist. */
   size: (path: string) => Promise<number | null>;
-  /** Read [start, end) as UTF-8 text. */
-  read: (path: string, start: number, end: number) => Promise<string>;
+  /** Read bytes from [start, end). Returning FEWER bytes than requested is
+   * allowed; the tailer advances by what it actually received. */
+  read: (path: string, start: number, end: number) => Promise<Uint8Array>;
 };
 
 const BACKFILL_BYTES = 128 * 1024;
+const NEWLINE = 0x0a;
 
 export class Tail {
   private readonly io: TailIo;
   private readonly path: string;
   private offset: number;
-  private buf = "";
+  private buf = new Uint8Array(0);
 
   /** startAtEnd: begin ~128 KB before EOF (skipping the first partial line)
    * instead of replaying the whole file. */
@@ -39,27 +51,37 @@ export class Tail {
     if (this.offset === -1) {
       this.offset = Math.max(0, size - BACKFILL_BYTES);
       if (this.offset > 0) {
-        const text = await this.io.read(this.path, this.offset, size);
-        const nl = text.indexOf("\n");
-        this.offset += nl >= 0 ? nl + 1 : text.length;
+        // Skip forward to the first line boundary so we never start mid-line.
+        const probe = await this.io.read(this.path, this.offset, size);
+        const nl = probe.indexOf(NEWLINE);
+        this.offset += nl >= 0 ? nl + 1 : probe.length;
       }
     }
     if (size < this.offset) {
       // Truncated or rotated underneath us.
       this.offset = 0;
-      this.buf = "";
+      this.buf = new Uint8Array(0);
     }
     if (size === this.offset) return;
 
     const chunk = await this.io.read(this.path, this.offset, size);
-    this.offset = size;
-    this.buf += chunk;
-    let nl = this.buf.indexOf("\n");
+    if (chunk.length === 0) return;
+    this.offset += chunk.length;
+
+    const joined = new Uint8Array(this.buf.length + chunk.length);
+    joined.set(this.buf, 0);
+    joined.set(chunk, this.buf.length);
+    this.buf = joined;
+
+    const decoder = new TextDecoder();
+    let start = 0;
+    let nl = this.buf.indexOf(NEWLINE, start);
     while (nl >= 0) {
-      const line = this.buf.slice(0, nl).trim();
-      this.buf = this.buf.slice(nl + 1);
+      const line = decoder.decode(this.buf.slice(start, nl)).trim();
       if (line !== "") onLine(line);
-      nl = this.buf.indexOf("\n");
+      start = nl + 1;
+      nl = this.buf.indexOf(NEWLINE, start);
     }
+    this.buf = this.buf.slice(start);
   }
 }

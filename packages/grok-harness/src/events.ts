@@ -44,8 +44,15 @@ export type GrokEvent =
       conversationMessageCount: number;
       sessionRelationship: SessionRelationship;
       schemaVersion: string;
+      redirectKind: string | null;
     }
-  | { type: "turn_ended"; at: number; outcome: TurnOutcome; cancellationCategory: string | null }
+  | {
+      type: "turn_ended";
+      at: number;
+      outcome: TurnOutcome;
+      cancellationCategory: string | null;
+      cancellationContext: unknown;
+    }
   | { type: "phase_changed"; at: number; phase: Phase }
   | { type: "first_token"; at: number }
   | { type: "loop_started"; at: number; loopIndex: number }
@@ -54,7 +61,7 @@ export type GrokEvent =
   | { type: "permission_requested"; at: number; toolName: string }
   | { type: "permission_resolved"; at: number; toolName: string; decision: PermissionDecision; waitMs: number }
   | { type: "yolo_toggled"; at: number; enabled: boolean }
-  | { type: "interjected"; at: number; source: string }
+  | { type: "interjected"; at: number; source: string; imageCount: number; redirectKind: string | null }
   | { type: "mcp"; at: number; subtype: string; serverName: string | null; healthy: boolean | null }
   | { type: "other"; at: number; subtype: string };
 
@@ -90,6 +97,7 @@ export function parseEventLine(line: string): GrokEvent | null {
         conversationMessageCount: num(o["conversation_message_count"]),
         sessionRelationship: str(o["session_relationship"]) === "subagent" ? "subagent" : "primary",
         schemaVersion: str(o["schema_version"], EVENT_SCHEMA_VERSION),
+        redirectKind: typeof o["redirect_kind"] === "string" ? o["redirect_kind"] : null,
       };
     case "turn_ended": {
       const outcome = str(o["outcome"], "completed");
@@ -98,6 +106,7 @@ export function parseEventLine(line: string): GrokEvent | null {
         at: ts,
         outcome: outcome === "cancelled" || outcome === "error" ? outcome : "completed",
         cancellationCategory: typeof o["cancellation_category"] === "string" ? o["cancellation_category"] : null,
+        cancellationContext: o["cancellation_context"] ?? null,
       };
     }
     case "phase_changed": {
@@ -131,7 +140,13 @@ export function parseEventLine(line: string): GrokEvent | null {
     case "yolo_toggled":
       return { type, at: ts, enabled: bool(o["enabled"]) };
     case "interjected":
-      return { type, at: ts, source: str(o["source"]) };
+      return {
+        type,
+        at: ts,
+        source: str(o["source"]),
+        imageCount: num(o["image_count"]),
+        redirectKind: typeof o["redirect_kind"] === "string" ? o["redirect_kind"] : null,
+      };
     default:
       if (type.startsWith("mcp_")) {
         return {

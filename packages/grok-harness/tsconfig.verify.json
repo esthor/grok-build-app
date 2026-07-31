@@ -1,0 +1,9 @@
+{
+  // The conformance harness runs under Bun (reads ~/.grok); the library
+  // itself stays runtime-agnostic under tsconfig.json.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["bun"]
+  },
+  "include": ["verify.ts", "src/**/*.ts"]
+}

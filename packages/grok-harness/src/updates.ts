@@ -28,7 +28,9 @@ export type UpdateKind =
   | "plan"
   | "available_commands_update"
   | "current_mode_update"
-  | "turn_completed";
+  | "turn_completed"
+  | "session_recap"
+  | "subagent_spawned";
 
 export type PromptUsageModel = {
   inputTokens: number;
@@ -125,6 +127,38 @@ export function turnUsageOf(update: JObj): PromptUsage | null {
     ...model(usage),
     numTurns: num(usage["numTurns"]),
     usageIsIncomplete: usage["usageIsIncomplete"] === true,
+  };
+}
+
+/** A `session_recap` update (xAI extension): rolling session summary. */
+export function recapOf(update: JObj): { summary: string; auto: boolean } | null {
+  const summary = str(update["summary"]);
+  if (summary === "") return null;
+  return { summary, auto: update["auto"] === true };
+}
+
+/** A `subagent_spawned` update (xAI extension): child session linkage. */
+export type SubagentSpawn = {
+  subagentId: string;
+  childSessionId: string;
+  parentSessionId: string;
+  parentPromptId: string;
+  subagentType: string;
+  description: string;
+  capabilityMode: string;
+};
+
+export function subagentSpawnOf(update: JObj): SubagentSpawn | null {
+  const subagentId = str(update["subagent_id"]);
+  if (subagentId === "") return null;
+  return {
+    subagentId,
+    childSessionId: str(update["child_session_id"]),
+    parentSessionId: str(update["parent_session_id"]),
+    parentPromptId: str(update["parent_prompt_id"]),
+    subagentType: str(update["subagent_type"]),
+    description: str(update["description"]),
+    capabilityMode: str(update["capability_mode"]),
   };
 }
 

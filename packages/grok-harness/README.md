@@ -12,7 +12,14 @@ all consume it).
 ```sh
 cd packages/grok-harness
 bun install && bun run check
+bun run verify   # conformance: replays every local ~/.grok session through
+                 # the parsers — 0 rejected lines, enum values in-union,
+                 # Tail equivalence under short-read drip-feed
 ```
+
+`verify` is the schema's proof: run it after any grok-build upgrade to catch
+vocabulary drift (new event types and update kinds surface in its report
+before they bite an app).
 
 Consume by relative import (each app keeps its own toolchain; there is no
 root workspace by design):

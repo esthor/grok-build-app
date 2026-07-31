@@ -35,7 +35,7 @@ type Emit = {
 
 const home = (): string => grokHome(process.env, homedir(), join);
 
-/** Bun-backed IO for the shared Tail. */
+/** Bun-backed IO for the shared Tail (byte-oriented per the contract). */
 const BUN_IO: TailIo = {
   size: async (path) => {
     try {
@@ -44,7 +44,7 @@ const BUN_IO: TailIo = {
       return null;
     }
   },
-  read: (path, start, end) => Bun.file(path).slice(start, end).text(),
+  read: async (path, start, end) => new Uint8Array(await Bun.file(path).slice(start, end).arrayBuffer()),
 };
 
 async function readText(path: string): Promise<string> {
