@@ -7,7 +7,7 @@ export const missionWidget: WidgetDef = {
   id: "mission",
   label: "MISSION // SESSION",
   col: 3,
-  order: 0,
+  order: 1,
   h: 148,
   mount({ store, body, setStatus }) {
     const title = el("div", "", "NO ACTIVE MISSION");

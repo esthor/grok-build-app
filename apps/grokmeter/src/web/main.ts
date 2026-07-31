@@ -2,7 +2,7 @@
 // draggable panels, keeps the WebSocket link to the collectors ("measures"),
 // and runs the shared animation tick.
 
-import { decodeWire } from "../shared/protocol.ts";
+import { decodeWire, encodeClientWire } from "../shared/protocol.ts";
 import { Store } from "./store.ts";
 import { Backdrop } from "./fx/backdrop.ts";
 import { el } from "./lib.ts";
@@ -25,6 +25,7 @@ import { latencyWidget } from "./widgets/latency.ts";
 import { missionWidget } from "./widgets/mission.ts";
 import { permissionsWidget } from "./widgets/permissions.ts";
 import { sysinfoWidget } from "./widgets/sysinfo.ts";
+import { fleetWidget } from "./widgets/fleet.ts";
 
 const WIDGETS: WidgetDef[] = [
   clockWidget,
@@ -44,6 +45,7 @@ const WIDGETS: WidgetDef[] = [
   missionWidget,
   permissionsWidget,
   sysinfoWidget,
+  fleetWidget,
 ];
 
 type Rect = { x: number; y: number; w: number; h: number };
@@ -285,6 +287,9 @@ function main(): void {
   const connect = (): void => {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const sock = new WebSocket(`${proto}://${location.host}/ws`);
+    store.requestFocus = (id): void => {
+      if (sock.readyState === WebSocket.OPEN) sock.send(encodeClientWire({ t: "focus", id }));
+    };
     sock.addEventListener("open", () => {
       retryMs = 1000;
       store.setLink(true);

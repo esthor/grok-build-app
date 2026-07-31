@@ -7,9 +7,11 @@ import { startGrok } from "./collectors/grok.ts";
 import { startMedia } from "./collectors/media.ts";
 import { startSystem } from "./collectors/system.ts";
 import {
+  decodeClientWire,
   encodeWire,
   type AgentSnapshot,
   type FeedItem,
+  type FleetEntry,
   type MediaState,
   type ServerInfo,
   type SysStats,
@@ -46,7 +48,11 @@ const info: ServerInfo = {
 let lastSys: SysStats | null = null;
 let lastAgent: AgentSnapshot | null = null;
 let lastMedia: MediaState | null = null;
+let lastFleet: FleetEntry[] = [];
 const feedRing: FeedItem[] = [];
+
+/** Focus requests land here once a collector registers its handle. */
+let onFocus: (id: string) => void = () => {};
 
 const server = Bun.serve({
   port: PORT,
@@ -75,9 +81,12 @@ const server = Bun.serve({
       ws.send(encodeWire({ t: "agent", agent: lastAgent }));
       if (lastMedia !== null) ws.send(encodeWire({ t: "media", media: lastMedia }));
       if (feedRing.length > 0) ws.send(encodeWire({ t: "feed", items: feedRing }));
+      if (lastFleet.length > 0) ws.send(encodeWire({ t: "fleet", fleet: lastFleet }));
     },
-    message() {
-      // Deck is read-only for now.
+    message(_ws, data) {
+      if (typeof data !== "string") return;
+      const msg = decodeClientWire(data);
+      if (msg !== null) onFocus(msg.id);
     },
     close(ws) {
       ws.unsubscribe(TOPIC);
@@ -107,14 +116,20 @@ const emit = {
     if (feedRing.length > FEED_BUFFER) feedRing.splice(0, feedRing.length - FEED_BUFFER);
     broadcast({ t: "feed", items });
   },
+  fleet: (fleet: FleetEntry[]): void => {
+    lastFleet = fleet;
+    broadcast({ t: "fleet", fleet });
+  },
 };
 
 if (DEMO) {
-  startDemo(emit);
+  const demo = startDemo(emit);
+  onFocus = demo.setFocus;
 } else {
   startSystem(emit);
   startMedia(emit);
-  startGrok(emit);
+  const grok = startGrok(emit);
+  onFocus = grok.setFocus;
 }
 
 console.log(`▲ grokmeter ${info.mode} deck on http://localhost:${server.port}`);

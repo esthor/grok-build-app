@@ -61,6 +61,8 @@ for alerts — and **honest data, decorative motion: never fake the numbers.**
 - `PERMISSIONS // GATE` — approval telemetry + klaxon band while the agent
   is holding for a human
 - `MISSION // SESSION` — session title, cwd, branch@commit, sandbox, effort
+- `SESSIONS // FLEET` — every live session as a row (phase lamp, context %);
+  click to focus the deck on it
 
 **Classic Rainmeter fare**
 
@@ -91,11 +93,17 @@ The schemas, parsers, and tailer for these surfaces come from the shared
 single source of truth for grok-build interfaces. The tailer resumes from
 byte offsets, tolerates torn final lines (the harness heals them on next
 append), re-stats atomically-replaced files by path, and rebuilds counters
-by replaying the event log on attach. It prefers
-the live session with the freshest event file, and falls back to the most
-recently active session on disk (shown as non-live) when nothing is running.
-Demo mode emits the exact same wire protocol, so the UI cannot tell the
-difference — that's the measures/meters split doing its job.
+by replaying the event log on attach.
+
+**Multiple sessions:** the deck watches every live session concurrently
+(capped at 8, freshest event files win) and lists them in
+`SESSIONS // FLEET`. One session at a time is *focused* — the agent widgets
+stream it — and focus is sticky: it never auto-switches while the focused
+session is alive, so two busy sessions can't make the deck flap. Click a
+fleet row to refocus; when nothing is live, the deck falls back to the most
+recently active session on disk (marked `DISK`). Demo mode emits the exact
+same wire protocol, so the UI cannot tell the difference — that's the
+measures/meters split doing its job.
 
 ## Controls
 
@@ -119,6 +127,7 @@ are real, which are degraded, and which are theater:
 | Agent phase, turns, TTFT, tool counts/durations/outcomes, permission counts + waits | folded from `events.jsonl` | ✅ real |
 | Tool call detail, thoughts/messages text, context occupancy | `updates.jsonl` stream (`_meta.totalTokens` is the harness's own bytes/4 estimate) | ✅ real (upstream estimate) |
 | Session identity, git head, model, sandbox | `summary.json` | ✅ real |
+| Fleet roster (sessions, phases, context %) | `active_sessions.json` + per-session watchers (pid-verified) | ✅ real |
 | Line churn (+/−, files) | `hunk_records.jsonl`, latest record per hunk | ✅ real |
 | CPU total, load, memory, network, disk, processes, uptime | `top` / `sysctl` / `vm_stat` / `netstat` / `df` / `ps` | ✅ real |
 | Now-playing track/artist/album/position | AppleScript (Spotify, then Music), 3 s poll | ✅ real, coarse |

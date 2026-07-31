@@ -26,11 +26,17 @@ import {
   type ActiveSessionEntry,
   type TailIo,
 } from "../../../../packages/grok-harness/src/index.ts";
-import type { AgentPhase, AgentSnapshot, FeedItem, ToolStats } from "../shared/protocol.ts";
+import type { AgentPhase, AgentSnapshot, FeedItem, FleetEntry, ToolStats } from "../shared/protocol.ts";
 
 type Emit = {
   agent: (agent: AgentSnapshot | null) => void;
   feed: (items: FeedItem[]) => void;
+  fleet: (fleet: FleetEntry[]) => void;
+};
+
+export type GrokHandle = {
+  /** Focus a watched session by id (from a fleet row click). */
+  setFocus: (id: string) => void;
 };
 
 const home = (): string => grokHome(process.env, homedir(), join);
@@ -98,6 +104,9 @@ class SessionWatch {
   compactionCount = 0;
   itlP50 = 0;
   itlP99 = 0;
+
+  /** Recent feed items for this session, kept so focus switches can backfill. */
+  readonly ring: FeedItem[] = [];
 
   readonly dir: string;
   readonly id: string;
@@ -347,6 +356,13 @@ function clip(text: string, max: number): string {
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
 
+const RING_CAP = 60;
+
+function pushRing(ring: FeedItem[], items: FeedItem[]): void {
+  ring.push(...items);
+  if (ring.length > RING_CAP) ring.splice(0, ring.length - RING_CAP);
+}
+
 // ── Discovery ────────────────────────────────────────────────────────────
 
 async function readActive(): Promise<ActiveSessionEntry[]> {
@@ -429,38 +445,74 @@ async function findRecentSession(): Promise<{ dir: string; id: string; cwd: stri
 
 // ── Public entry ─────────────────────────────────────────────────────────
 
-export function startGrok(emit: Emit): void {
-  let watch: SessionWatch | null = null;
-  let watchLive = false;
+const MAX_WATCHES = 8;
+
+/**
+ * Watch EVERY live session concurrently (capped at MAX_WATCHES, freshest
+ * event files win). All watchers fold state and keep a feed ring; only the
+ * focused session streams to the deck's agent widgets. Focus is sticky —
+ * it never auto-switches while the focused session stays watched, so two
+ * busy sessions can't make the deck flap.
+ */
+export function startGrok(emit: Emit): GrokHandle {
+  const watches = new Map<string, { watch: SessionWatch; live: boolean }>();
+  let focusedId: string | null = null;
+
+  const focused = (): { watch: SessionWatch; live: boolean } | null =>
+    focusedId !== null ? (watches.get(focusedId) ?? null) : null;
+
+  const emitFocus = (entry: { watch: SessionWatch; live: boolean }): void => {
+    const w = entry.watch;
+    emit.feed([
+      {
+        at: Date.now(),
+        kind: "phase",
+        text: `▶ focused ${w.id.slice(0, 8)} · ${w.cwd.split("/").pop() ?? w.cwd}`,
+      },
+      ...w.ring.slice(-30),
+    ]);
+    emit.agent(w.snapshot(entry.live));
+  };
+
+  const emitFleet = (): void => {
+    const fleet: FleetEntry[] = [...watches.values()]
+      .map(({ watch: w, live }) => ({
+        id: w.id,
+        title: w.title,
+        cwd: w.cwd,
+        model: w.model,
+        phase: (w.permPending ? "permission_prompt" : w.phase) as AgentPhase,
+        live,
+        focused: w.id === focusedId,
+        permPending: w.permPending,
+        contextUsedTokens: w.contextUsedTokens,
+        contextWindowTokens: w.contextWindowTokens,
+        toolCallCount: Object.values(w.tools).reduce((a, t) => a + t.count, 0),
+        updatedAt: w.updatedAt,
+      }))
+      .sort((a, b) => a.cwd.localeCompare(b.cwd) || a.id.localeCompare(b.id));
+    emit.fleet(fleet);
+  };
 
   const attach = async (dir: string, id: string, cwd: string, live: boolean): Promise<void> => {
     const fresh = new SessionWatch(dir, id, cwd);
     await fresh.refreshMeta();
-
-    // Replay the whole event log (and the recent updates window) to rebuild
-    // counters; surface only a short, time-ordered tail in the feed.
+    // Replay to rebuild counters; the tail lands in the ring, not the feed.
     const backfill: FeedItem[] = [];
     await fresh.events.poll((line) => fresh.foldEvent(line, backfill));
     await fresh.updates.poll((line) => fresh.foldUpdate(line, backfill));
     await fresh.hunks.poll((line) => fresh.foldHunk(line));
     backfill.sort((a, b) => a.at - b.at);
-    const recent = backfill.slice(-30);
-
-    watch = fresh;
-    watchLive = live;
-    emit.feed([
-      { at: Date.now(), kind: "phase", text: `▶ attached ${id.slice(0, 8)} · ${cwd.split("/").pop() ?? cwd}` },
-      ...recent,
-    ]);
-    emit.agent(fresh.snapshot(live));
+    pushRing(fresh.ring, backfill);
+    watches.set(id, { watch: fresh, live });
   };
 
-  // Discovery loop: prefer a live session (freshest events file wins).
+  // Discovery: keep a watcher per live session; fall back to the most
+  // recently active on-disk session when nothing is running.
   const discover = async (): Promise<void> => {
     const active = (await readActive()).filter((a) => pidAlive(a.pid));
-    let target: { dir: string; id: string; cwd: string; live: boolean } | null = null;
+    const targets = new Map<string, { dir: string; cwd: string; live: boolean; mtime: number }>();
 
-    let bestMtime = -1;
     for (const a of active) {
       const dir = await findSessionDir(a.cwd, a.sessionId);
       if (dir === null) continue;
@@ -470,28 +522,48 @@ export function startGrok(emit: Emit): void {
       } catch {
         mtime = 0;
       }
-      if (mtime > bestMtime) {
-        bestMtime = mtime;
-        target = { dir, id: a.sessionId, cwd: a.cwd, live: true };
-      }
+      targets.set(a.sessionId, { dir, cwd: a.cwd, live: true, mtime });
     }
-    if (target === null) {
+    if (targets.size === 0) {
       const recent = await findRecentSession();
-      if (recent !== null) target = { ...recent, live: false };
+      if (recent !== null) targets.set(recent.id, { dir: recent.dir, cwd: recent.cwd, live: false, mtime: 0 });
     }
 
-    if (target === null) {
-      if (watch !== null) {
-        watch = null;
-        emit.agent(null);
+    // Cap by activity.
+    const keep = new Set(
+      [...targets.entries()]
+        .sort((a, b) => b[1].mtime - a[1].mtime)
+        .slice(0, MAX_WATCHES)
+        .map(([id]) => id),
+    );
+
+    for (const id of [...watches.keys()]) {
+      if (!keep.has(id)) watches.delete(id);
+    }
+    for (const id of keep) {
+      const t = targets.get(id);
+      if (t === undefined) continue;
+      const existing = watches.get(id);
+      if (existing === undefined) {
+        await attach(t.dir, id, t.cwd, t.live);
+      } else {
+        existing.live = t.live;
       }
-      return;
     }
-    if (watch === null || watch.id !== target.id) {
-      await attach(target.dir, target.id, target.cwd, target.live);
-    } else {
-      watchLive = target.live;
+
+    // Sticky focus: only (re)pick when the focused session vanished.
+    if (focusedId === null || !watches.has(focusedId)) {
+      const preferred =
+        [...targets.entries()]
+          .filter(([id]) => watches.has(id))
+          .sort((a, b) => Number(b[1].live) - Number(a[1].live) || b[1].mtime - a[1].mtime)
+          .map(([id]) => id)[0] ?? null;
+      focusedId = preferred;
+      const entry = focused();
+      if (entry !== null) emitFocus(entry);
+      else emit.agent(null);
     }
+    emitFleet();
   };
 
   // Both loop bodies are async on fixed timers: an in-flight latch keeps a
@@ -507,23 +579,26 @@ export function startGrok(emit: Emit): void {
   discoverOnce();
   setInterval(discoverOnce, 2000);
 
-  // Tail + snapshot loop.
+  // Tail loop: poll every watcher; stream only the focused one.
   let tailing = false;
   setInterval(() => {
-    const w = watch;
-    if (w === null || tailing) return;
+    if (tailing) return;
     tailing = true;
     void (async () => {
-      const fresh: FeedItem[] = [];
-      await w.updates.poll((line) => w.foldUpdate(line, fresh));
-      await w.events.poll((line) => w.foldEvent(line, fresh));
-      await w.hunks.poll((line) => w.foldHunk(line));
-      if (watch !== w) return; // session switched mid-poll; drop stale output
-      if (fresh.length > 0) {
+      for (const entry of watches.values()) {
+        const w = entry.watch;
+        const fresh: FeedItem[] = [];
+        await w.updates.poll((line) => w.foldUpdate(line, fresh));
+        await w.events.poll((line) => w.foldEvent(line, fresh));
+        await w.hunks.poll((line) => w.foldHunk(line));
+        if (fresh.length === 0) continue;
         fresh.sort((a, b) => a.at - b.at);
-        emit.feed(fresh);
+        pushRing(w.ring, fresh);
+        if (w.id === focusedId) emit.feed(fresh);
       }
-      emit.agent(w.snapshot(watchLive));
+      const entry = focused();
+      if (entry !== null) emit.agent(entry.watch.snapshot(entry.live));
+      emitFleet();
     })().finally(() => {
       tailing = false;
     });
@@ -531,7 +606,16 @@ export function startGrok(emit: Emit): void {
 
   // Meta refresh (summary/signals are small atomic files).
   setInterval(() => {
-    const w = watch;
-    if (w !== null) void w.refreshMeta();
+    for (const { watch } of watches.values()) void watch.refreshMeta();
   }, 3000);
+
+  return {
+    setFocus: (id: string): void => {
+      const entry = watches.get(id);
+      if (entry === undefined || id === focusedId) return;
+      focusedId = id;
+      emitFocus(entry);
+      emitFleet();
+    },
+  };
 }

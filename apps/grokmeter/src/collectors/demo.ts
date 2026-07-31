@@ -6,6 +6,7 @@ import type {
   AgentPhase,
   AgentSnapshot,
   FeedItem,
+  FleetEntry,
   MediaState,
   SysStats,
   ToolStats,
@@ -16,6 +17,11 @@ type Emit = {
   feed: (items: FeedItem[]) => void;
   sys: (sys: SysStats) => void;
   media: (media: MediaState) => void;
+  fleet: (fleet: FleetEntry[]) => void;
+};
+
+export type DemoHandle = {
+  setFocus: (id: string) => void;
 };
 
 const TOOLS = [
@@ -92,7 +98,7 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-export function startDemo(emit: Emit): void {
+export function startDemo(emit: Emit): DemoHandle {
   const rnd = mulberry32(0x67726f6b); // "grok"
   const startedAt = Date.now();
 
@@ -313,7 +319,59 @@ export function startDemo(emit: Emit): void {
       activeTool = null;
     }
     emit.agent(snapshot());
+    emitFleet();
   }, 1000);
+
+  // ── Demo fleet: the scripted mission plus two ambient sessions ────────
+  let focusedId = "demo-019f-cafe-f00d";
+  const emitFleet = (): void => {
+    const main = snapshot();
+    const rows: FleetEntry[] = [
+      {
+        id: main.id,
+        title: main.title,
+        cwd: main.cwd,
+        model: main.model,
+        phase: main.phase,
+        live: true,
+        focused: focusedId === main.id,
+        permPending: main.permPending,
+        contextUsedTokens: main.contextUsedTokens,
+        contextWindowTokens: main.contextWindowTokens,
+        toolCallCount: main.toolCallCount,
+        updatedAt: Date.now(),
+      },
+      {
+        id: "demo-019f-beef-0001",
+        title: "Refactor Skin Runtime",
+        cwd: "~/dev/grokamp",
+        model: "grok-4.5",
+        phase: "idle",
+        live: true,
+        focused: focusedId === "demo-019f-beef-0001",
+        permPending: false,
+        contextUsedTokens: 212_400,
+        contextWindowTokens: 500_000,
+        toolCallCount: 87,
+        updatedAt: Date.now() - 340_000,
+      },
+      {
+        id: "demo-019f-beef-0002",
+        title: "Fix CI Flake",
+        cwd: "~/dev/vibecheck",
+        model: "grok-4.5",
+        phase: "permission_prompt",
+        live: true,
+        focused: focusedId === "demo-019f-beef-0002",
+        permPending: true,
+        contextUsedTokens: 64_100,
+        contextWindowTokens: 500_000,
+        toolCallCount: 21,
+        updatedAt: Date.now() - 12_000,
+      },
+    ];
+    emit.fleet(rows);
+  };
 
   // ── System stats ───────────────────────────────────────────────────────
   const CORES = 10;
@@ -395,4 +453,15 @@ export function startDemo(emit: Emit): void {
       durationSec: dur,
     });
   }, 1000);
+
+  return {
+    setFocus: (id: string): void => {
+      if (id === focusedId) return;
+      focusedId = id;
+      // The scripted mission keeps streaming regardless; the marker keeps
+      // the demo honest about what a focus switch does.
+      feed([{ at: Date.now(), kind: "phase", text: `▶ focused ${id.slice(0, 13)} (demo)` }]);
+      emitFleet();
+    },
+  };
 }

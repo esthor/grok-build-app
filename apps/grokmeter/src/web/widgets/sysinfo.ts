@@ -7,7 +7,7 @@ export const sysinfoWidget: WidgetDef = {
   id: "sysinfo",
   label: "SYSTEM // INFO",
   col: 3,
-  order: 2,
+  order: 3,
   h: 124,
   mount({ store, body, setStatus }) {
     const mkRow = (key: string): HTMLElement => {
