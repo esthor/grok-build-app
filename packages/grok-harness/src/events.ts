@@ -19,17 +19,9 @@ export const PHASES = [
 ] as const;
 export type Phase = (typeof PHASES)[number];
 
-export type ToolOutcome =
-  | "success"
-  | "error"
-  | "permission_rejected"
-  | "permission_cancelled"
-  | "followup"
-  | "hook_denied"
-  | "invalid_tool"
-  | "cancelled";
+export type ToolOutcome = (typeof TOOL_OUTCOMES)[number];
 
-export const TOOL_OUTCOMES: readonly ToolOutcome[] = [
+export const TOOL_OUTCOMES = [
   "success",
   "error",
   "permission_rejected",
@@ -38,18 +30,13 @@ export const TOOL_OUTCOMES: readonly ToolOutcome[] = [
   "hook_denied",
   "invalid_tool",
   "cancelled",
-];
+] as const;
 
-export type PermissionDecision = "allow" | "deny" | "cancelled" | "followup";
-export const PERMISSION_DECISIONS: readonly PermissionDecision[] = [
-  "allow",
-  "deny",
-  "cancelled",
-  "followup",
-];
+export const PERMISSION_DECISIONS = ["allow", "deny", "cancelled", "followup"] as const;
+export type PermissionDecision = (typeof PERMISSION_DECISIONS)[number];
 
-export type TurnOutcome = "completed" | "cancelled" | "error";
-export const TURN_OUTCOMES: readonly TurnOutcome[] = ["completed", "cancelled", "error"];
+export const TURN_OUTCOMES = ["completed", "cancelled", "error"] as const;
+export type TurnOutcome = (typeof TURN_OUTCOMES)[number];
 
 export type SessionRelationship = "primary" | "subagent";
 
@@ -242,7 +229,9 @@ export function parseEventLine(line: string): GrokEvent | null {
   if (type === "") return null;
   const ts = Date.parse(str(o["ts"]));
   if (!Number.isFinite(ts)) return null;
-  const fields = restFields(o, ["type", "ts"]);
+  // phase_changed is 90%+ of lines; only compute the rest-fields spill for
+  // the branches that actually carry it.
+  const fields = (): JObj => restFields(o, ["type", "ts"]);
 
   switch (type) {
     case "turn_started":
@@ -272,7 +261,7 @@ export function parseEventLine(line: string): GrokEvent | null {
     case "phase_changed": {
       const phase = asPhase(str(o["phase"]));
       return phase === null
-        ? { type: "other", at: ts, subtype: "phase_changed", fields }
+        ? { type: "other", at: ts, subtype: "phase_changed", fields: fields() }
         : { type, at: ts, phase };
     }
     case "first_token":
@@ -321,12 +310,12 @@ export function parseEventLine(line: string): GrokEvent | null {
           subtype: type,
           serverName: optStr(o["server_name"]),
           healthy: typeof o["healthy"] === "boolean" ? o["healthy"] : null,
-          fields,
+          fields: fields(),
         };
       }
       if (KNOWN_SET.has(type)) {
-        return { type: "orchestration", at: ts, subtype: type, fields };
+        return { type: "orchestration", at: ts, subtype: type, fields: fields() };
       }
-      return { type: "other", at: ts, subtype: type, fields };
+      return { type: "other", at: ts, subtype: type, fields: fields() };
   }
 }

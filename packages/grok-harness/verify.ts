@@ -216,8 +216,12 @@ for (const s of sessions) {
     updateLines += 1;
     const env = parseUpdateLine(line);
     if (env === null) {
-      updateNulls += 1;
-      fail(`${s.id}: update envelope rejected: ${line.slice(0, 90)}`);
+      // Only valid-JSON lines count as parser rejections; torn lines are
+      // the writer contract, same tolerance as the events loop.
+      if (parseObj(line) !== null) {
+        updateNulls += 1;
+        fail(`${s.id}: update envelope rejected: ${line.slice(0, 90)}`);
+      }
       continue;
     }
     tally(updateKinds, env.kind);
@@ -257,7 +261,7 @@ for (const s of sessions) {
 
   for (const line of await lines(join(s.dir, SESSION_FILES.hunkRecords))) {
     hunkLines += 1;
-    if (parseHunkLine(line) === null) {
+    if (parseHunkLine(line) === null && parseObj(line) !== null) {
       hunkNulls += 1;
       fail(`${s.id}: hunk line rejected: ${line.slice(0, 90)}`);
     }

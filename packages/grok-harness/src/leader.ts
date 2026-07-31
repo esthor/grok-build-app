@@ -92,13 +92,21 @@ export const SESSION_USAGE_METHOD = "x.ai/session/usage";
 export const SESSION_INFO_METHOD = "x.ai/session/info";
 export const SESSION_UPDATES_METHOD = "x.ai/session/updates";
 
-export type RosterActivity =
-  | "working"
-  | "idle"
-  | "needs_input"
-  | "dormant"
-  | "completed"
-  | "dead";
+export const ROSTER_ACTIVITIES = [
+  "working",
+  "idle",
+  "needs_input",
+  "dormant",
+  "completed",
+  "dead",
+] as const;
+export type RosterActivity = (typeof ROSTER_ACTIVITIES)[number];
+
+const ROSTER_ACTIVITY_SET = new Set<string>(ROSTER_ACTIVITIES);
+
+export function asRosterActivity(v: string): RosterActivity | null {
+  return ROSTER_ACTIVITY_SET.has(v) ? (v as RosterActivity) : null;
+}
 
 export type RosterEntry = {
   sessionId: string;
@@ -144,7 +152,7 @@ export function parseRosterEntry(v: unknown): RosterEntry | null {
     cwd,
     isWorktree: v["isWorktree"] === true,
     yolo: v["yolo"] === true,
-    activity: (typeof v["activity"] === "string" ? v["activity"] : "idle") as RosterActivity,
+    activity: asRosterActivity(typeof v["activity"] === "string" ? v["activity"] : "") ?? "idle",
     resident: v["resident"] === true,
     lastChangeUnixMs: typeof v["lastChangeUnixMs"] === "number" ? v["lastChangeUnixMs"] : 0,
     origin,
@@ -195,35 +203,65 @@ export function frameLeaderMessage(msg: LeaderClientMessage): Uint8Array {
   return out;
 }
 
-/** Incremental deframer: feed received chunks, get parsed server messages. */
+/**
+ * Incremental deframer: feed received chunks, get parsed server messages.
+ * An oversize length prefix is an unrecoverable framing error — the stream
+ * position is unknown from that point — so the deframer poisons itself and
+ * every later push throws; the caller must drop the connection (the
+ * outbound side, frameLeaderMessage, already throws symmetrically).
+ */
 export class LeaderDeframer {
-  private buf = new Uint8Array(0);
+  private chunks: Uint8Array[] = [];
+  private buffered = 0;
+  private poisoned = false;
 
   push(chunk: Uint8Array): LeaderServerMessage[] {
-    const joined = new Uint8Array(this.buf.length + chunk.length);
-    joined.set(this.buf, 0);
-    joined.set(chunk, this.buf.length);
-    this.buf = joined;
+    if (this.poisoned) {
+      throw new Error("leader deframer is desynchronized; reconnect");
+    }
+    // Accumulate chunk references; concatenate only when draining, so
+    // buffering N chunks costs O(bytes), not O(bytes × chunks).
+    if (chunk.length > 0) {
+      this.chunks.push(chunk);
+      this.buffered += chunk.length;
+    }
 
     const out: LeaderServerMessage[] = [];
-    while (this.buf.length >= 4) {
-      const len = new DataView(this.buf.buffer, this.buf.byteOffset).getUint32(0, false);
+    while (this.buffered >= 4) {
+      const buf = this.coalesce();
+      const len = new DataView(buf.buffer, buf.byteOffset).getUint32(0, false);
       if (len > LEADER_MAX_MESSAGE_SIZE) {
-        this.buf = new Uint8Array(0);
-        break;
+        this.poisoned = true;
+        this.chunks = [];
+        this.buffered = 0;
+        throw new Error(`leader frame length ${len} exceeds max ${LEADER_MAX_MESSAGE_SIZE}`);
       }
-      if (this.buf.length < 4 + len) break;
-      const body = this.buf.slice(4, 4 + len);
-      this.buf = this.buf.slice(4 + len);
+      if (buf.length < 4 + len) break;
+      const body = buf.slice(4, 4 + len);
+      const rest = buf.slice(4 + len);
+      this.chunks = rest.length > 0 ? [rest] : [];
+      this.buffered = rest.length;
       try {
         const parsed: unknown = JSON.parse(new TextDecoder().decode(body));
         if (typeof parsed === "object" && parsed !== null && "type" in parsed) {
           out.push(parsed as LeaderServerMessage);
         }
       } catch {
-        // Skip unparseable frame.
+        // Skip unparseable frame body; framing itself is still aligned.
       }
     }
     return out;
+  }
+
+  private coalesce(): Uint8Array {
+    if (this.chunks.length === 1) return this.chunks[0] ?? new Uint8Array(0);
+    const joined = new Uint8Array(this.buffered);
+    let at = 0;
+    for (const c of this.chunks) {
+      joined.set(c, at);
+      at += c.length;
+    }
+    this.chunks = joined.length > 0 ? [joined] : [];
+    return joined;
   }
 }

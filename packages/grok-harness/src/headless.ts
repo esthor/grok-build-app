@@ -1,4 +1,4 @@
-import { num, parseObj, str, type JObj } from "./json.ts";
+import { num, parseObj, str, sub, type JObj } from "./json.ts";
 
 // Schemas for headless grok (`grok -p`) output. Mirrors
 // crates/codegen/xai-grok-pager/src/headless.rs.
@@ -89,11 +89,8 @@ export type HeadlessJsonResult = {
 export function parseHeadlessJsonResult(text: string): HeadlessJsonResult | null {
   const o = parseObj(text);
   if (o === null) return null;
-  const usage = typeof o["usage"] === "object" && o["usage"] !== null ? (o["usage"] as Record<string, unknown>) : {};
-  const modelUsage =
-    typeof o["modelUsage"] === "object" && o["modelUsage"] !== null && !Array.isArray(o["modelUsage"])
-      ? (o["modelUsage"] as JObj)
-      : null;
+  const usage = sub(o["usage"]) ?? {};
+  const modelUsage = sub(o["modelUsage"]);
   return {
     text: str(o["text"]),
     stopReason: str(o["stopReason"]),

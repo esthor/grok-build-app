@@ -33,7 +33,10 @@ export function parseActiveSessions(text: string): ActiveSessionEntry[] {
     const o = item as JObj;
     const sessionId = str(o["session_id"]);
     const cwd = str(o["cwd"]);
-    if (!SESSION_ID_RE.test(sessionId) || cwd === "") continue;
+    // cwd must be an absolute path: a relative value (even "..") would
+    // otherwise flow into a path join under the sessions root.
+    if (!SESSION_ID_RE.test(sessionId)) continue;
+    if (!(cwd.startsWith("/") || /^[A-Za-z]:[\\/]/.test(cwd))) continue;
     out.push({
       sessionId,
       pid: num(o["pid"]),
@@ -104,13 +107,15 @@ export function parseSummary(text: string): SessionSummary | null {
 
 /** signals.json — cumulative session counters (see staleness warning above).
  * Only the fields consumers currently rely on are modeled; the raw object is
- * returned alongside for the rest. */
+ * returned alongside for the rest. Slow-moving fields are `number | null`:
+ * null means the file omitted the key, which is different from a real zero
+ * — consumers show absence instead of reconstructing it with heuristics. */
 export type SessionSignals = {
   contextTokensUsed: number;
   contextWindowTokens: number;
-  compactionCount: number;
-  itlP50Ms: number;
-  itlP99Ms: number;
+  compactionCount: number | null;
+  itlP50Ms: number | null;
+  itlP99Ms: number | null;
   errorCount: number;
   toolCallCount: number;
   turnCount: number;
@@ -118,15 +123,19 @@ export type SessionSignals = {
   raw: JObj;
 };
 
+function numOrNull(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
 export function parseSignals(text: string): SessionSignals | null {
   const o = parseObj(text);
   if (o === null) return null;
   return {
     contextTokensUsed: num(o["contextTokensUsed"]),
     contextWindowTokens: num(o["contextWindowTokens"]),
-    compactionCount: num(o["compactionCount"]),
-    itlP50Ms: num(o["itlP50Ms"]),
-    itlP99Ms: num(o["itlP99Ms"]),
+    compactionCount: numOrNull(o["compactionCount"]),
+    itlP50Ms: numOrNull(o["itlP50Ms"]),
+    itlP99Ms: numOrNull(o["itlP99Ms"]),
     errorCount: num(o["errorCount"]),
     toolCallCount: num(o["toolCallCount"]),
     turnCount: num(o["turnCount"]),
