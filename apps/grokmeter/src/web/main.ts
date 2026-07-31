@@ -94,13 +94,28 @@ function defaultLayout(vw: number): Map<string, Rect> {
   return rects;
 }
 
+function isRect(v: unknown): v is Rect {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (["x", "y", "w", "h"] as const).every(
+    (k) => typeof o[k] === "number" && Number.isFinite(o[k]),
+  );
+}
+
 function loadSavedLayout(): Record<string, Rect> {
   try {
     const raw = localStorage.getItem(LAYOUT_KEY);
     if (raw === null) return {};
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) return {};
-    return parsed as Record<string, Rect>;
+    // Trust nothing from storage: a stale schema or hand-edited entry with
+    // non-numeric fields would otherwise flow into applyRect as
+    // "undefinedpx" and silently misplace the widget.
+    const out: Record<string, Rect> = {};
+    for (const [id, rect] of Object.entries(parsed)) {
+      if (isRect(rect)) out[id] = rect;
+    }
+    return out;
   } catch {
     return {};
   }
@@ -133,7 +148,8 @@ function main(): void {
     trayTheme.textContent = THEME_LABEL[name] ?? name.toUpperCase();
     backdrop.retheme();
   };
-  setTheme(localStorage.getItem(THEME_KEY) ?? DEFAULT_THEME);
+  const storedTheme = localStorage.getItem(THEME_KEY);
+  setTheme(THEMES.find((t) => t === storedTheme) ?? DEFAULT_THEME);
   const cycleTheme = (): void => {
     const cur = document.documentElement.getAttribute("data-theme") ?? DEFAULT_THEME;
     const idx = THEMES.indexOf(cur as (typeof THEMES)[number]);
@@ -252,10 +268,14 @@ function main(): void {
       const up = (): void => {
         root.removeEventListener("pointermove", move);
         root.removeEventListener("pointerup", up);
+        root.removeEventListener("pointercancel", up);
         persist();
       };
       root.addEventListener("pointermove", move);
       root.addEventListener("pointerup", up);
+      // OS gestures / palm rejection cancel instead of completing; without
+      // this, stale move listeners stack up and later drags jitter.
+      root.addEventListener("pointercancel", up);
     });
   }
 

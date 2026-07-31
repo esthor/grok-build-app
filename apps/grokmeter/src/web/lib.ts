@@ -128,6 +128,28 @@ export function fmtTime(at: number): string {
     .join(":");
 }
 
+/**
+ * Prepare a canvas for drawing this frame: size the backing buffer for the
+ * devicePixelRatio and return a transform-set 2d context, or null when the
+ * canvas has no layout size yet. One implementation so canvas widgets can't
+ * drift on the zero-size guard.
+ */
+export function frameCanvas(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  if (w === 0 || h === 0) return null;
+  if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+  }
+  const ctx = canvas.getContext("2d");
+  if (ctx === null) return null;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return ctx;
+}
+
 /** Fixed-capacity numeric ring for sparklines. */
 export class Ring {
   readonly cap: number;

@@ -71,6 +71,13 @@ export const memWidget: WidgetDef = {
     body.append(svgRoot, right);
 
     store.on("sys", (sys) => {
+      if (sys.mem.totalBytes <= 0) {
+        // Sampling failure: show absence, not NaN dressed up as healthy.
+        pctText.textContent = "—";
+        val.setAttribute("d", arcPath(c, c, r, A0, A0));
+        setStatus("");
+        return;
+      }
       const frac = sys.mem.usedBytes / sys.mem.totalBytes;
       val.setAttribute("d", arcPath(c, c, r, A0, A0 + frac * (A1 - A0)));
       val.setAttribute("stroke", frac > 0.9 ? "var(--bad)" : frac > 0.75 ? "var(--warn)" : "var(--accent)");

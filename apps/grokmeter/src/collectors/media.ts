@@ -55,14 +55,18 @@ export function startMedia(emit: Emit): void {
       ) {
         continue;
       }
+      // Honest data: malformed timing means this player's answer is
+      // unusable — skip it rather than fabricate zeros.
+      const pos = Number(posRaw.replace(",", "."));
       const dur = Number(durRaw.replace(",", "."));
+      if (!Number.isFinite(pos) || !Number.isFinite(dur) || pos < 0 || dur < 0) continue;
       emit.media({
         player: app,
         state: stateRaw === "playing" ? "playing" : "paused",
         track,
         artist,
         album,
-        positionSec: Number(posRaw.replace(",", ".")) || 0,
+        positionSec: pos,
         // Spotify reports duration in ms; Music in seconds.
         durationSec: app === "Spotify" ? dur / 1000 : dur,
       });
