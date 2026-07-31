@@ -26,8 +26,21 @@ export function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
 
+// Computed-style reads are expensive and cssVar is called from per-frame
+// tick loops; values only change on theme switch, so cache until invalidated.
+const cssVarCache = new Map<string, string>();
+
 export function cssVar(name: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const hit = cssVarCache.get(name);
+  if (hit !== undefined) return hit;
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  cssVarCache.set(name, value);
+  return value;
+}
+
+/** Call on theme change so cached values re-resolve. */
+export function invalidateCssVars(): void {
+  cssVarCache.clear();
 }
 
 /** Polar point on a circle; angles in degrees, 0° = 12 o'clock, clockwise. */
@@ -59,6 +72,7 @@ export function fmtBytes(n: number): string {
 }
 
 export function fmtBps(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "—";
   return `${fmtBytes(n)}/s`;
 }
 
@@ -102,6 +116,7 @@ export function toolAbbrev(name: string): string {
 }
 
 export function fmtDur(totalSec: number): string {
+  if (!Number.isFinite(totalSec)) return "—";
   const s = Math.max(0, Math.floor(totalSec));
   const d = Math.floor(s / 86400);
   const h = Math.floor((s % 86400) / 3600);
@@ -112,6 +127,7 @@ export function fmtDur(totalSec: number): string {
 }
 
 export function fmtClock(totalSec: number): string {
+  if (!Number.isFinite(totalSec)) return "—";
   const s = Math.max(0, Math.floor(totalSec));
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);

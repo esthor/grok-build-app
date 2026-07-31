@@ -2,9 +2,9 @@
 // if neither is running (or automation permission is denied) the widget
 // simply shows no signal.
 
-import type { MediaState } from "../shared/protocol.ts";
+import type { CollectorEmit } from "../shared/protocol.ts";
 
-type Emit = { media: (media: MediaState | null) => void };
+type Emit = Pick<CollectorEmit, "media">;
 
 async function osascript(script: string): Promise<string> {
   try {

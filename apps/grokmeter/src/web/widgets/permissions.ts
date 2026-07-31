@@ -29,6 +29,10 @@ export const permissionsWidget: WidgetDef = {
 
     store.on("agent", (agent) => {
       if (agent === null) {
+        req.textContent = "—";
+        denied.textContent = "—";
+        denied.style.color = "var(--ink)";
+        wait.textContent = "—";
         band.classList.remove("show");
         setStatus("");
         return;

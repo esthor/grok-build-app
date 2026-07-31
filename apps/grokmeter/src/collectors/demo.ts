@@ -5,18 +5,11 @@
 import type {
   AgentPhase,
   AgentSnapshot,
+  CollectorEmit,
   FeedItem,
-  MediaState,
   SysStats,
   ToolStats,
 } from "../shared/protocol.ts";
-
-type Emit = {
-  agent: (agent: AgentSnapshot) => void;
-  feed: (items: FeedItem[]) => void;
-  sys: (sys: SysStats) => void;
-  media: (media: MediaState) => void;
-};
 
 const TOOLS = [
   "read_file",
@@ -92,7 +85,7 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-export function startDemo(emit: Emit): void {
+export function startDemo(emit: CollectorEmit): void {
   const rnd = mulberry32(0x67726f6b); // "grok"
   const startedAt = Date.now();
 

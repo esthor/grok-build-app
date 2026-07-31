@@ -150,6 +150,15 @@ export type ServerInfo = {
   startedAt: number;
 };
 
+/** What a collector ("measure") can publish — one shape shared by the demo
+ * generator and every live collector so they stay interchangeable. */
+export type CollectorEmit = {
+  sys: (sys: SysStats) => void;
+  agent: (agent: AgentSnapshot | null) => void;
+  media: (media: MediaState | null) => void;
+  feed: (items: FeedItem[]) => void;
+};
+
 /** Server → client messages. */
 export type Wire =
   | { t: "hello"; server: ServerInfo }

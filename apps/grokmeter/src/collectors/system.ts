@@ -4,9 +4,9 @@
 // reports cores: [] and the CPU widget falls back to a total-load bar.
 
 import { hostname } from "node:os";
-import type { SysStats } from "../shared/protocol.ts";
+import type { CollectorEmit, SysStats } from "../shared/protocol.ts";
 
-type Emit = { sys: (sys: SysStats) => void };
+type Emit = Pick<CollectorEmit, "sys">;
 
 async function run(cmd: string[], timeoutMs = 5000): Promise<string> {
   try {
@@ -30,9 +30,13 @@ function every(ms: number, sample: () => Promise<void>): void {
   const tick = (): void => {
     if (busy) return;
     busy = true;
-    void sample().finally(() => {
-      busy = false;
-    });
+    void sample()
+      .catch(() => {
+        // A failed sample costs one tick, never the process.
+      })
+      .finally(() => {
+        busy = false;
+      });
   };
   tick();
   setInterval(tick, ms);
@@ -106,7 +110,10 @@ export function startSystem(emit: Emit): void {
       run(["vm_stat"]),
       state.memTotal === 0 ? run(["sysctl", "-n", "hw.memsize"]) : Promise.resolve(""),
     ]);
-    if (totalOut.trim() !== "") state.memTotal = Number(totalOut.trim());
+    const memsize = Number(totalOut.trim());
+    // Guard the latch: a garbled read would pin memTotal to NaN forever
+    // (the sampler only re-reads while memTotal is 0).
+    if (Number.isFinite(memsize) && memsize > 0) state.memTotal = memsize;
     const page = (label: string): number => {
       const m = new RegExp(`${label}:\\s+(\\d+)`).exec(vmOut);
       return m?.[1] !== undefined ? Number(m[1]) : 0;
