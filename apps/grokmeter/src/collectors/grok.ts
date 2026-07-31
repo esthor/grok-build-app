@@ -21,6 +21,7 @@ import {
   parseSignals,
   parseSummary,
   parseUpdateLine,
+  SESSION_ID_RE,
   sessionDir,
   summarizeRawInput,
   toolMetaOf,
@@ -233,7 +234,9 @@ class SessionWatch {
   foldUpdate(line: string, feed: FeedItem[]): void {
     const env = parseUpdateLine(line);
     if (env === null) return;
-    const at = env.agentTimestampMs ?? Date.now();
+    // Prefer the agent's own millisecond stamp, then the envelope write
+    // time; never invent "now" for a replayed line.
+    const at = env.agentTimestampMs ?? (env.timestamp > 0 ? env.timestamp * 1000 : Date.now());
 
     if (env.totalTokens !== null && env.totalTokens >= 0) {
       // Context occupancy tracks the stream (down too, e.g. compaction);
@@ -312,7 +315,9 @@ class SessionWatch {
       sandbox: this.sandbox,
       live,
       startedAt: this.createdAt,
-      updatedAt: Date.now(),
+      // A live session is being updated right now; a disk-fallback session's
+      // honest "last activity" is what summary.json recorded, not "now".
+      updatedAt: live ? Date.now() : this.updatedAt,
       phase: this.permPending ? "permission_prompt" : this.phase,
       turnCount: this.turnCount,
       userMessages: this.userMessages,
@@ -393,8 +398,18 @@ async function findSessionDir(cwd: string, id: string): Promise<string | null> {
   return null;
 }
 
+/** The fallback scan readdirs every cwd bucket and stats every summary —
+ * hundreds of syscalls. The answer rarely changes while idle, and idle is
+ * where the deck lives, so cache it briefly. */
+let recentScanCache: { at: number; value: { dir: string; id: string; cwd: string } | null } = {
+  at: 0,
+  value: null,
+};
+const RECENT_SCAN_TTL_MS = 15_000;
+
 /** Most recently touched session on disk, for when nothing is live. */
 async function findRecentSession(): Promise<{ dir: string; id: string; cwd: string } | null> {
+  if (Date.now() - recentScanCache.at < RECENT_SCAN_TTL_MS) return recentScanCache.value;
   const root = join(home(), "sessions");
   let best: { dir: string; id: string; cwd: string; mtime: number } | null = null;
   let cwdDirs: string[] = [];
@@ -414,8 +429,9 @@ async function findRecentSession(): Promise<{ dir: string; id: string; cwd: stri
       continue;
     }
     for (const id of ids) {
-      const dir = sessionDir(home(), decoded, id, join);
-      if (dir === null) continue;
+      // `base` is authoritative here (long cwds encode differently on disk);
+      // the id just has to be a valid session id before any path join.
+      if (!SESSION_ID_RE.test(id)) continue;
       try {
         const s = await stat(join(base, id, SESSION_FILES.summary));
         if (best === null || s.mtimeMs > best.mtime) {
@@ -426,7 +442,9 @@ async function findRecentSession(): Promise<{ dir: string; id: string; cwd: stri
       }
     }
   }
-  return best === null ? null : { dir: best.dir, id: best.id, cwd: best.cwd };
+  const value = best === null ? null : { dir: best.dir, id: best.id, cwd: best.cwd };
+  recentScanCache = { at: Date.now(), value };
+  return value;
 }
 
 // ── Public entry ─────────────────────────────────────────────────────────
@@ -502,9 +520,14 @@ export function startGrok(emit: Emit): void {
   const discoverOnce = (): void => {
     if (discovering) return;
     discovering = true;
-    void discover().finally(() => {
-      discovering = false;
-    });
+    void discover()
+      .catch(() => {
+        // A transient FS race must cost one tick, never the process:
+        // unhandled rejections are fatal under Bun.
+      })
+      .finally(() => {
+        discovering = false;
+      });
   };
   discoverOnce();
   setInterval(discoverOnce, 2000);
@@ -526,14 +549,19 @@ export function startGrok(emit: Emit): void {
         emit.feed(fresh);
       }
       emit.agent(w.snapshot(watchLive));
-    })().finally(() => {
-      tailing = false;
-    });
+    })()
+      .catch(() => {
+        // Skip the tick on a transient FS race; never surface an unhandled
+        // rejection from a timer body.
+      })
+      .finally(() => {
+        tailing = false;
+      });
   }, 900);
 
   // Meta refresh (summary/signals are small atomic files).
   setInterval(() => {
     const w = watch;
-    if (w !== null) void w.refreshMeta();
+    if (w !== null) void w.refreshMeta().catch(() => {});
   }, 3000);
 }

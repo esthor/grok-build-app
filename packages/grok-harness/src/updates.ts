@@ -10,7 +10,7 @@
 //   usageIsIncomplete/costIsPartial means UNKNOWN, never free.
 // - params._meta.totalTokens is context occupancy (bytes/4), drops on compaction.
 
-import { isObj, num, parseObj, str, sub, type JObj } from "./json.ts";
+import { num, parseObj, str, sub, type JObj } from "./json.ts";
 import type { CanonicalToolMeta } from "./tools.ts";
 
 export const ACP_UPDATE_METHOD = "session/update";
@@ -428,8 +428,4 @@ export function summarizeRawInput(update: JObj, max = 110): string {
     }
   }
   return "";
-}
-
-export function isUpdateObj(v: unknown): v is JObj {
-  return isObj(v);
 }

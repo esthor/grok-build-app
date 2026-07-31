@@ -107,8 +107,13 @@ console.log(`hooks: ${HOOK_EVENT_NAMES.length} events, aliases resolve`);
     .catch(() => "");
   if (raw !== "") {
     const entries = parseActiveSessions(raw);
-    const arr: unknown = JSON.parse(raw);
-    const rawCount = Array.isArray(arr) ? arr.length : -1;
+    let rawCount = -1;
+    try {
+      const arr: unknown = JSON.parse(raw);
+      rawCount = Array.isArray(arr) ? arr.length : -1;
+    } catch {
+      // Torn write mid-read: tolerate, matching parseActiveSessions.
+    }
     console.log(`active_sessions.json: ${entries.length}/${rawCount} entries parsed`);
     if (rawCount >= 0 && entries.length !== rawCount) fail("active_sessions entries dropped by parser");
   }
@@ -137,7 +142,9 @@ let taskBg = 0;
 let taskDone = 0;
 
 for (const s of sessions) {
-  const summaryText = await Bun.file(join(s.dir, SESSION_FILES.summary)).text();
+  const summaryText = await Bun.file(join(s.dir, SESSION_FILES.summary))
+    .text()
+    .catch(() => "");
   const summary = parseSummary(summaryText);
   if (summary === null) {
     fail(`${s.id}: summary.json unparseable`);
@@ -282,7 +289,13 @@ for (const s of sessions) {
     if (collected.length !== direct.length) {
       fail(`Tail equivalence: ${collected.length} lines via 1KB drip ≠ ${direct.length} direct`);
     } else {
-      console.log(`tail: ${collected.length} lines identical via 1 KB drip-feed reads`);
+      // "Identical" must mean contents, not just counts.
+      const diverged = collected.findIndex((l, i) => l !== (direct[i] ?? "").trim());
+      if (diverged >= 0) {
+        fail(`Tail equivalence: line ${diverged} differs between drip-feed and direct read`);
+      } else {
+        console.log(`tail: ${collected.length} lines identical via 1 KB drip-feed reads`);
+      }
     }
   }
 }

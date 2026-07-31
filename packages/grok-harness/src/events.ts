@@ -228,7 +228,10 @@ function restFields(o: JObj, drop: string[]): JObj {
 
 /**
  * Parse one events.jsonl line. Returns null only for unparseable lines
- * (torn/corrupt) — skip and continue per the torn-line contract.
+ * (torn/corrupt) — skip and continue per the torn-line contract. A line
+ * without a parseable `ts` counts as malformed: the upstream EventWriter
+ * always stamps RFC3339, and inventing a present-day time here would
+ * poison latency series and backfill ordering with fabricated values.
  */
 export function parseEventLine(line: string): GrokEvent | null {
   const o = parseObj(line);
@@ -237,8 +240,8 @@ export function parseEventLine(line: string): GrokEvent | null {
   let type = str(o["type"]);
   if (type === "mcp_o_auth_discovery_timeout") type = "mcp_oauth_discovery_timeout";
   if (type === "") return null;
-  const at = Date.parse(str(o["ts"]));
-  const ts = Number.isFinite(at) ? at : Date.now();
+  const ts = Date.parse(str(o["ts"]));
+  if (!Number.isFinite(ts)) return null;
   const fields = restFields(o, ["type", "ts"]);
 
   switch (type) {
@@ -261,7 +264,7 @@ export function parseEventLine(line: string): GrokEvent | null {
       return {
         type,
         at: ts,
-        outcome: (asTurnOutcome(raw) ?? "completed") as TurnOutcome,
+        outcome: asTurnOutcome(raw) ?? "completed",
         cancellationCategory: optStr(o["cancellation_category"]),
         cancellationContext: o["cancellation_context"] ?? null,
       };
@@ -285,7 +288,7 @@ export function parseEventLine(line: string): GrokEvent | null {
         at: ts,
         toolName: str(o["tool_name"], "?"),
         durationMs: num(o["duration_ms"]),
-        outcome: (asToolOutcome(raw) ?? "error") as ToolOutcome,
+        outcome: asToolOutcome(raw) ?? "error",
       };
     }
     case "permission_requested":
@@ -296,7 +299,7 @@ export function parseEventLine(line: string): GrokEvent | null {
         type,
         at: ts,
         toolName: str(o["tool_name"], "?"),
-        decision: (asPermissionDecision(raw) ?? "allow") as PermissionDecision,
+        decision: asPermissionDecision(raw) ?? "allow",
         waitMs: num(o["wait_ms"]),
       };
     }
