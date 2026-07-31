@@ -17,12 +17,9 @@ import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { num, parseObj, str, sub, type JObj } from "./jsonx.ts";
-import type { AgentPhase, AgentSnapshot, FeedItem, ToolStats } from "../shared/protocol.ts";
+import type { AgentPhase, AgentSnapshot, CollectorEmit, FeedItem, ToolStats } from "../shared/protocol.ts";
 
-type Emit = {
-  agent: (agent: AgentSnapshot | null) => void;
-  feed: (items: FeedItem[]) => void;
-};
+type Emit = Pick<CollectorEmit, "agent" | "feed">;
 
 const grokHome = (): string => process.env["GROK_HOME"] ?? join(homedir(), ".grok");
 
@@ -37,12 +34,21 @@ const SESSION_ID_RE = /^[0-9a-fA-F-]{8,64}$/;
 
 const NEWLINE = 0x0a;
 const BACKFILL_BYTES = 128 * 1024;
+/** Per-read ceiling: bounds peak memory when replaying a large log. The
+ * inner loop below keeps reading until caught up, so semantics per poll()
+ * are unchanged. */
+const READ_CAP_BYTES = 4 * 1024 * 1024;
 
 async function readBytes(path: string, start: number, end: number): Promise<Uint8Array> {
   return new Uint8Array(await Bun.file(path).slice(start, end).arrayBuffer());
 }
 
 class Tail {
+  /** Set when the file shrank underneath us (rewind/rotation). The owner
+   * must rebuild any state folded from this file — the tail itself resumes
+   * per its mode, but counters folded before the truncation are stale. */
+  truncated = false;
+
   private readonly path: string;
   private readonly startAtEnd: boolean;
   private offset: number;
@@ -90,7 +96,9 @@ class Tail {
     }
     if (size < this.offset) {
       // Truncated or rotated: return to this tail's own mode (a
-      // start-at-end tail must not replay the whole replacement file).
+      // start-at-end tail must not replay the whole replacement file) and
+      // flag the owner to rebuild folded state.
+      this.truncated = true;
       this.offset = this.startAtEnd ? -1 : 0;
       this.buf = new Uint8Array(0);
       if (this.offset === -1) {
@@ -98,27 +106,29 @@ class Tail {
         return;
       }
     }
-    if (size === this.offset) return;
 
-    const chunk = await readBytes(this.path, this.offset, size);
-    if (chunk.length === 0) return;
-    this.offset += chunk.length;
+    while (this.offset < size) {
+      const end = Math.min(size, this.offset + READ_CAP_BYTES);
+      const chunk = await readBytes(this.path, this.offset, end);
+      if (chunk.length === 0) return;
+      this.offset += chunk.length;
 
-    const joined = new Uint8Array(this.buf.length + chunk.length);
-    joined.set(this.buf, 0);
-    joined.set(chunk, this.buf.length);
-    this.buf = joined;
+      const joined = new Uint8Array(this.buf.length + chunk.length);
+      joined.set(this.buf, 0);
+      joined.set(chunk, this.buf.length);
+      this.buf = joined;
 
-    const decoder = new TextDecoder();
-    let start = 0;
-    let nl = this.buf.indexOf(NEWLINE, start);
-    while (nl >= 0) {
-      const line = decoder.decode(this.buf.slice(start, nl)).trim();
-      if (line !== "") onLine(line);
-      start = nl + 1;
-      nl = this.buf.indexOf(NEWLINE, start);
+      const decoder = new TextDecoder();
+      let start = 0;
+      let nl = this.buf.indexOf(NEWLINE, start);
+      while (nl >= 0) {
+        const line = decoder.decode(this.buf.slice(start, nl)).trim();
+        if (line !== "") onLine(line);
+        start = nl + 1;
+        nl = this.buf.indexOf(NEWLINE, start);
+      }
+      this.buf = this.buf.slice(start);
     }
-    this.buf = this.buf.slice(start);
   }
 }
 
@@ -469,7 +479,9 @@ async function readActiveSessions(): Promise<ActiveEntry[]> {
       const o = item as JObj;
       const sessionId = str(o["session_id"]);
       const cwd = str(o["cwd"]);
-      if (!SESSION_ID_RE.test(sessionId) || cwd === "") continue;
+      // cwd must be an absolute path: a relative value (even "..") would
+      // otherwise flow into a path join under the sessions root.
+      if (!SESSION_ID_RE.test(sessionId) || !cwd.startsWith("/")) continue;
       out.push({ sessionId, pid: num(o["pid"]), cwd });
     }
     return out;
@@ -670,6 +682,13 @@ export function startGrok(emit: Emit): void {
       await w.events.poll((line) => w.foldEvent(line, fresh));
       await w.hunks.poll((line) => w.foldHunk(line));
       if (watch !== w) return; // session switched mid-poll; drop stale output
+      if (w.events.truncated || w.updates.truncated || w.hunks.truncated) {
+        // A source file shrank (rewind/rotation): counters folded from it
+        // are stale, so rebuild the watch from scratch instead of folding
+        // the replay into already-populated state.
+        await attach(w.dir, w.id, w.cwd, watchLive);
+        return;
+      }
       if (fresh.length > 0) {
         fresh.sort((a, b) => a.at - b.at);
         emit.feed(fresh);

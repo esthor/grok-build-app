@@ -54,6 +54,14 @@ export class Store {
     this.emit("link", up);
   }
 
+  /** Drop replayable state before a reconnect replays the server's ring
+   * buffer, so the feed doesn't duplicate. Emits an empty feed batch as the
+   * reset signal (widgets clear when the store's feed is empty). */
+  resetFeed(): void {
+    this.feed.length = 0;
+    this.emit("feed", []);
+  }
+
   ingest(msg: Wire): void {
     switch (msg.t) {
       case "hello":
