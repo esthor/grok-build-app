@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import type { WinId } from "../state/windows";
 import type { ResizeSpec } from "../wm/Window";
+import { HeadTile } from "./HeadTile";
 import { MainTile } from "./MainTile";
 import { McpTile } from "./McpTile";
 import { QueueTile } from "./QueueTile";
@@ -14,6 +15,8 @@ export interface WindowDef {
   readonly title: string;
   readonly component: ComponentType;
   readonly resize?: ResizeSpec;
+  /** renders its own chrome (the .wsz head unit); skip the Win wrapper */
+  readonly frameless?: true;
 }
 
 /**
@@ -55,4 +58,5 @@ export const WINDOW_DEFS: Readonly<Record<WinId, WindowDef>> = {
     component: SkinLabTile,
     resize: { min: { w: 370, h: 260 }, step: STEP },
   },
+  head: { title: "HEAD UNIT", component: HeadTile, frameless: true },
 };

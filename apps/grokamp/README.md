@@ -1,6 +1,6 @@
 # GROKAMP
 
-**A Winamp-shaped frontend for [Grok Build](https://x.ai/cli), xAI's terminal coding agent.**
+**A Winamp-shaped frontend for [Grok Build](../../README.md).**
 It really whips the token stream.
 
 The playlist is a task queue. The EQ tunes the harness. The visualizer eats
@@ -21,7 +21,7 @@ of skins — and the ease of making them — is what made Winamp *Winamp*.
 ## Run it
 
 ```sh
-cd apps/grokamp
+cd ui/grokamp
 bun install
 bun run dev          # http://localhost:5177
 ```
@@ -35,7 +35,8 @@ bun run typecheck    # strictest tsconfig that exists
 bun run build        # production bundle (~126 kB gzip)
 ```
 
-Desktop shell (Tauri v2 — `cargo check`s clean; needs a Rust toolchain):
+Desktop shell (Tauri v2 — `cargo check`s clean; needs the repo's Rust
+toolchain):
 
 ```sh
 bun run tauri dev
@@ -52,7 +53,8 @@ bun run tauri dev
 | **VISUALIZER** | vis window | spectrum (19 bars + falling peak caps) / oscilloscope / plasma, fed by token flow — tool calls kick the bass |
 | **TODO LIST** | — | the agent's live plan; in-progress blinks |
 | **MCP SERVERS** | plugins | server rack with status LEDs |
-| **SKIN LAB** | skin picker + MS Paint | live recolor, APPLY/EXPORT/IMPORT/RANDOM |
+| **SKIN LAB** | skin picker + MS Paint | live recolor, APPLY/EXPORT/IMPORT/RANDOM, WEAR .WSZ |
+| **HEAD UNIT** | the main window itself | a real 275×116 classic-skin window blitted from a user-supplied `.wsz` — pixel-perfect sprites, bitmap-font ticker, working transport (Alt+9) |
 
 Windows drag, **snap at the classic 10px** (20 at our 2× pixel grid),
 double-click titlebars to **windowshade**, and the resizable ones quantize to
@@ -63,8 +65,8 @@ workspace is a link.
 ## Keys
 
 `Z X C V B` prev/play/pause/stop/next (the sacred row) · `S` shuffle ·
-`R` repeat · `L` eject/queue a task · `Ctrl+D` double size · `Alt+1..8`
-toggle windows · **type `llama`** for the tribute (yes, the l's queue tasks;
+`R` repeat · `L` eject/queue a task · `Ctrl+D` double size · `Alt+1..9`
+toggle windows (9 = the .wsz head unit) · **type `llama`** for the tribute (yes, the l's queue tasks;
 the original NULLSOFT egg had the same hazard — that's why it was
 N-U-L-Esc-L-Esc-S-O-F-T. Lore-accurate. Not a bug.)
 
@@ -91,7 +93,7 @@ N-U-L-Esc-L-Esc-S-O-F-T. Lore-accurate. Not a bug.)
   `skipLibCheck: false` for app code (the test config concedes lib-checking
   because `bun-types` itself doesn't pass it).
 - **Tauri v2 over Electron** for the shell: ~10 MB vs ~200 MB, native webview,
-  and Rust — the language of grok-build itself, so the future
+  and Rust — the language of the host repo, so the future
   `grok agent stdio` adapter can live in-process. The browser build remains
   first-class.
 - **No UI framework, no component library.** The chrome is hand-bevelled CSS

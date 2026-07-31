@@ -1,10 +1,12 @@
 import { useStore } from "@tanstack/react-store";
 import { useRef, useState, type ReactNode } from "react";
+import demoWszUrl from "../assets/grokamp-classic.wsz?url";
 import { BUILTIN_SKINS } from "../skins/builtins";
 import { buildVis, lerpHex } from "../skins/ramp";
 import { parseSkin, skinToJson } from "../skins/runtime";
 import type { Skin, SkinColors } from "../skins/types";
 import { SKIN_COLOR_KEYS } from "../skins/types";
+import { deriveGrokampSkin, forgetWsz, loadWsz, persistWsz, wszStore } from "../skins/wsz";
 import { pushLog } from "../state/session";
 import {
   allSkins,
@@ -13,6 +15,7 @@ import {
   settingsStore,
   upsertCustomSkin,
 } from "../state/settings";
+import { setWindowOpen } from "../state/windows";
 import { LcdText, SquareBtn } from "../ui/controls";
 
 function hslToHex(h: number, s: number, l: number): string {
@@ -146,7 +149,28 @@ export function SkinLabTile(): ReactNode {
     pushLog("sys", `skin exported: ${a.download}`);
   };
 
+  const wearWszBytes = async (bytes: Uint8Array, name: string): Promise<void> => {
+    try {
+      const wsz = await loadWsz(bytes, name);
+      if (wsz.sheets.main === undefined) {
+        pushLog("sys", `wsz rejected: no main.bmp in ${name}`, "err");
+        return;
+      }
+      wszStore.setState(() => wsz);
+      upsertCustomSkin(deriveGrokampSkin(wsz));
+      setWindowOpen("head", true);
+      persistWsz(bytes, name);
+      pushLog("sys", `wearing ${name} — head unit online`, "ok");
+    } catch {
+      pushLog("sys", `wsz rejected: ${name} is not a readable zip`, "err");
+    }
+  };
+
   const importFile = async (file: File): Promise<void> => {
+    if (/\.(wsz|zip)$/i.test(file.name)) {
+      await wearWszBytes(new Uint8Array(await file.arrayBuffer()), file.name.replace(/\.(wsz|zip)$/i, ""));
+      return;
+    }
     try {
       const parsed: unknown = JSON.parse(await file.text());
       const result = parseSkin(parsed);
@@ -236,13 +260,44 @@ export function SkinLabTile(): ReactNode {
           RANDOM
         </SquareBtn>
       </div>
+      <div className="skinlab-row skinlab-actions">
+        <SquareBtn
+          title="wear a classic winamp .wsz you supply (pixel-perfect head unit)"
+          onClick={() => {
+            fileRef.current?.click();
+          }}
+        >
+          WEAR .WSZ
+        </SquareBtn>
+        <SquareBtn
+          title="wear the bundled original-art demo .wsz"
+          onClick={() => {
+            void (async () => {
+              const res = await fetch(demoWszUrl);
+              await wearWszBytes(new Uint8Array(await res.arrayBuffer()), "grokamp-classic");
+            })();
+          }}
+        >
+          DEMO
+        </SquareBtn>
+        <SquareBtn
+          title="take the .wsz off"
+          onClick={() => {
+            forgetWsz();
+            setWindowOpen("head", false);
+            pushLog("sys", "wsz ejected");
+          }}
+        >
+          EJECT
+        </SquareBtn>
+      </div>
       <div className="skinlab-hint">
-        <LcdText dim>a skin is one JSON file — see docs/SKINNING.md</LcdText>
+        <LcdText dim>skins are JSON or classic .wsz — docs/SKINNING.md</LcdText>
       </div>
       <input
         ref={fileRef}
         type="file"
-        accept=".json,application/json"
+        accept=".json,application/json,.wsz,.zip,application/zip"
         style={{ display: "none" }}
         onChange={(e) => {
           const file = e.target.files?.[0];

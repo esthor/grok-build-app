@@ -425,6 +425,14 @@ html[data-scanlines="on"] .lcd::after {
   cursor: pointer;
 }
 
+/* the .wsz head unit: chromeless, its titlebar is the skin's own art */
+.head-win {
+  position: absolute;
+  image-rendering: pixelated;
+  box-shadow: 2px 3px 0 rgb(0 0 0 / 0.35);
+  touch-action: none;
+}
+
 @keyframes gk-blink {
   0%,
   49% {

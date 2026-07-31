@@ -72,7 +72,7 @@ export function App(): ReactNode {
         updateSettings({ doubleSize: !settingsStore.state.doubleSize });
         return;
       }
-      if (e.altKey && /^[1-8]$/.test(e.key)) {
+      if (e.altKey && /^[1-9]$/.test(e.key)) {
         const id = WIN_IDS[Number.parseInt(e.key, 10) - 1];
         if (id !== undefined) {
           e.preventDefault();
@@ -142,6 +142,9 @@ export function App(): ReactNode {
       {WIN_IDS.map((id) => {
         const def = WINDOW_DEFS[id];
         const Body = def.component;
+        if (def.frameless === true) {
+          return <Body key={id} />;
+        }
         return (
           <Win
             key={id}
