@@ -35,6 +35,10 @@ export const tokenFlowWidget: WidgetDef = {
     store.on("agent", (agent) => {
       if (agent === null) {
         total.textContent = "—";
+        rate.textContent = "—";
+        rate.style.color = "var(--dim)";
+        lastTokens = -1;
+        lastAt = 0;
         setStatus("");
         return;
       }

@@ -36,7 +36,14 @@ export const diffTapeWidget: WidgetDef = {
     body.append(totals, wrap);
 
     store.on("agent", (agent) => {
-      if (agent === null) return;
+      if (agent === null) {
+        added.textContent = "+0";
+        removed.textContent = "\u22120";
+        files.textContent = "0 FILES";
+        tape.innerHTML = "";
+        setStatus("");
+        return;
+      }
       added.textContent = `+${agent.linesAdded}`;
       removed.textContent = `−${agent.linesRemoved}`;
       files.textContent = `${agent.filesTouched} FILE${agent.filesTouched === 1 ? "" : "S"} · ${agent.gitBranch}`;

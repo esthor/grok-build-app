@@ -5,20 +5,12 @@
 import type {
   AgentPhase,
   AgentSnapshot,
+  CollectorEmit,
   FeedItem,
   FleetEntry,
-  MediaState,
   SysStats,
   ToolStats,
 } from "../shared/protocol.ts";
-
-type Emit = {
-  agent: (agent: AgentSnapshot) => void;
-  feed: (items: FeedItem[]) => void;
-  sys: (sys: SysStats) => void;
-  media: (media: MediaState) => void;
-  fleet: (fleet: FleetEntry[]) => void;
-};
 
 export type DemoHandle = {
   setFocus: (id: string) => void;
@@ -98,7 +90,7 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-export function startDemo(emit: Emit): DemoHandle {
+export function startDemo(emit: CollectorEmit): DemoHandle {
   const rnd = mulberry32(0x67726f6b); // "grok"
   const startedAt = Date.now();
 

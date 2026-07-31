@@ -61,6 +61,11 @@ export const feedWidget: WidgetDef = {
 
     for (const item of store.feed) render(item);
     store.on("feed", (items) => {
+      if (items.length === 0 && store.feed.length === 0) {
+        // Reconnect reset: the server is about to replay its ring.
+        feed.innerHTML = "";
+        return;
+      }
       for (const item of items) render(item);
       const last = items[items.length - 1];
       if (last !== undefined) {

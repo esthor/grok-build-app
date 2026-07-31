@@ -86,8 +86,19 @@ export const fleetWidget: WidgetDef = {
           row.append(lamp, name, where, ctx);
         }
 
-        row.addEventListener("click", () => {
+        // Keyboard parity with click: rows are focusable buttons.
+        row.setAttribute("role", "button");
+        row.setAttribute("tabindex", "0");
+        row.setAttribute("aria-pressed", s.focused ? "true" : "false");
+        const activate = (): void => {
           if (!s.focused) store.requestFocus(s.id);
+        };
+        row.addEventListener("click", activate);
+        row.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            activate();
+          }
         });
         list.append(row);
       }

@@ -32,6 +32,9 @@ export const latencyWidget: WidgetDef = {
 
     store.on("agent", (agent) => {
       if (agent === null) {
+        for (const cell of [ttftAvg, ttftMin, ttftMax, itlP50, itlP99, turns]) {
+          cell.textContent = "—";
+        }
         setStatus("");
         return;
       }

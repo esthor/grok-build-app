@@ -23,18 +23,15 @@ import {
   parseSummary,
   parseUpdateLine,
   sessionDir,
+  sessionsRoot,
   summarizeRawInput,
   toolMetaOf,
   type ActiveSessionEntry,
   type TailIo,
 } from "../../../../packages/grok-harness/src/index.ts";
-import type { AgentPhase, AgentSnapshot, FeedItem, FleetEntry, ToolStats } from "../shared/protocol.ts";
+import type { AgentPhase, AgentSnapshot, CollectorEmit, FeedItem, FleetEntry, ToolStats } from "../shared/protocol.ts";
 
-type Emit = {
-  agent: (agent: AgentSnapshot | null) => void;
-  feed: (items: FeedItem[]) => void;
-  fleet: (fleet: FleetEntry[]) => void;
-};
+type Emit = Pick<CollectorEmit, "agent" | "feed" | "fleet">;
 
 export type GrokHandle = {
   /** Focus a watched session by id (from a fleet row click). */
@@ -142,10 +139,11 @@ class SessionWatch {
       // counters before the first stream observation (window size and ITL
       // percentiles are the slow-moving values we actually want from it).
       this.contextWindowTokens = signals.contextWindowTokens > 0 ? signals.contextWindowTokens : this.contextWindowTokens;
-      // Preserve priors when signals omits slow-moving fields (defaults to 0).
-      if (signals.compactionCount > 0 || this.compactionCount === 0) this.compactionCount = signals.compactionCount;
-      if (signals.itlP50Ms > 0 || this.itlP50 === 0) this.itlP50 = signals.itlP50Ms;
-      if (signals.itlP99Ms > 0 || this.itlP99 === 0) this.itlP99 = signals.itlP99Ms;
+      // Slow-moving fields are null when signals.json omits them: keep the
+      // prior observation in that case (a real zero is applied as-is).
+      if (signals.compactionCount !== null) this.compactionCount = signals.compactionCount;
+      if (signals.itlP50Ms !== null) this.itlP50 = signals.itlP50Ms;
+      if (signals.itlP99Ms !== null) this.itlP99 = signals.itlP99Ms;
       this.errorCount = Math.max(this.errorCount, signals.errorCount);
       if (this.contextUsedTokens === 0) this.contextUsedTokens = signals.contextTokensUsed;
       if (this.totalTokens === 0) this.totalTokens = signals.contextTokensUsed;
@@ -177,10 +175,14 @@ class SessionWatch {
       }
       case "tool_completed": {
         const ok = ev.outcome === "success";
+        // Only genuine tool failures count as failures: permission denials,
+        // cancellations, and followups are user decisions or continuations,
+        // not the tool breaking.
+        const failed = ev.outcome === "error" || ev.outcome === "invalid_tool" || ev.outcome === "hook_denied";
         const cur = this.tools[ev.toolName] ?? { count: 0, failures: 0, totalMs: 0 };
         cur.count += 1;
         cur.totalMs += ev.durationMs;
-        if (!ok) {
+        if (failed) {
           cur.failures += 1;
           this.toolFailureCount += 1;
         }
@@ -283,9 +285,14 @@ class SessionWatch {
       }
       case "agent_message_chunk": {
         if (at - this.lastMessageAt >= 2500) {
-          this.assistantMessages += 1;
           const text = chunkText(env.update).trim();
-          if (text !== "") feed.push({ at, kind: "message", text: clip(text, 120) });
+          // An empty chunk shouldn't open (and count) a message burst.
+          if (text !== "") {
+            this.assistantMessages += 1;
+            feed.push({ at, kind: "message", text: clip(text, 120) });
+            this.lastMessageAt = at;
+          }
+          break;
         }
         this.lastMessageAt = at;
         break;
@@ -396,7 +403,7 @@ async function findSessionDir(cwd: string, id: string): Promise<string | null> {
   } catch {
     // Fall through to a scan (encoding edge cases, e.g. >255-byte cwds).
   }
-  const root = join(home(), "sessions");
+  const root = sessionsRoot(home(), join);
   try {
     for (const entry of await readdir(root)) {
       if (decodeCwdDirname(entry) !== cwd) continue;
@@ -426,7 +433,7 @@ const RECENT_SCAN_TTL_MS = 15_000;
 /** Most recently touched session on disk, for when nothing is live. */
 async function findRecentSession(): Promise<{ dir: string; id: string; cwd: string } | null> {
   if (Date.now() - recentScanCache.at < RECENT_SCAN_TTL_MS) return recentScanCache.value;
-  const root = join(home(), "sessions");
+  const root = sessionsRoot(home(), join);
   let best: { dir: string; id: string; cwd: string; mtime: number } | null = null;
   let cwdDirs: string[] = [];
   try {
@@ -508,7 +515,9 @@ export function startGrok(emit: Emit): GrokHandle {
         contextUsedTokens: w.contextUsedTokens,
         contextWindowTokens: w.contextWindowTokens,
         toolCallCount: Object.values(w.tools).reduce((a, t) => a + t.count, 0),
-        updatedAt: w.updatedAt,
+        // Same rule as snapshot(): live sessions are being updated now; only
+        // disk-fallback rows report the recorded last-active time.
+        updatedAt: live ? Date.now() : w.updatedAt,
       }))
       .sort((a, b) => a.cwd.localeCompare(b.cwd) || a.id.localeCompare(b.id));
     emit.fleet(fleet);
@@ -616,6 +625,18 @@ export function startGrok(emit: Emit): GrokHandle {
         await w.updates.poll((line) => w.foldUpdate(line, fresh));
         await w.events.poll((line) => w.foldEvent(line, fresh));
         await w.hunks.poll((line) => w.foldHunk(line));
+        if (w.events.truncated || w.updates.truncated || w.hunks.truncated) {
+          // A source file shrank (rewind/rotation): counters folded from it
+          // are stale, so rebuild this watch instead of folding a replay
+          // into already-populated state.
+          watches.delete(w.id);
+          await attach(w.dir, w.id, w.cwd, entry.live);
+          if (w.id === focusedId) {
+            const rebuilt = watches.get(w.id);
+            if (rebuilt !== undefined) emitFocus(rebuilt);
+          }
+          continue;
+        }
         if (fresh.length === 0) continue;
         fresh.sort((a, b) => a.at - b.at);
         pushRing(w.ring, fresh);

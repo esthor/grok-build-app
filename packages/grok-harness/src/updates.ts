@@ -354,7 +354,11 @@ export type AutoCompactStarted = {
   reason: string;
 };
 
-export function autoCompactStartedOf(update: JObj): AutoCompactStarted {
+export function autoCompactStartedOf(update: JObj): AutoCompactStarted | null {
+  // Align with the sibling accessors: absent payload → null, not zeros.
+  if (typeof update["percentage"] !== "number" && typeof update["tokens_used"] !== "number") {
+    return null;
+  }
   return {
     tokensUsed: num(update["tokens_used"]),
     contextWindow: num(update["context_window"]),

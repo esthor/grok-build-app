@@ -5,7 +5,7 @@
 import { decodeWire, encodeClientWire } from "../shared/protocol.ts";
 import { Store } from "./store.ts";
 import { Backdrop } from "./fx/backdrop.ts";
-import { el } from "./lib.ts";
+import { el, invalidateCssVars } from "./lib.ts";
 import type { WidgetDef, WidgetHandle } from "./widget.ts";
 
 import { clockWidget } from "./widgets/clock.ts";
@@ -146,6 +146,7 @@ function main(): void {
   const backdrop = new Backdrop(backdropCanvas);
   const setTheme = (name: string): void => {
     document.documentElement.setAttribute("data-theme", name);
+    invalidateCssVars();
     localStorage.setItem(THEME_KEY, name);
     trayTheme.textContent = THEME_LABEL[name] ?? name.toUpperCase();
     backdrop.retheme();
@@ -312,6 +313,9 @@ function main(): void {
     };
     sock.addEventListener("open", () => {
       retryMs = 1000;
+      // The server replays its feed ring to every new connection; clear
+      // ours first so a reconnect doesn't duplicate rows.
+      store.resetFeed();
       store.setLink(true);
     });
     sock.addEventListener("message", (ev) => {

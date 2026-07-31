@@ -106,7 +106,9 @@ export async function readCwdMarker(
   const text = await readFile(join(cwdDirPath, ".cwd"));
   if (text === null) return null;
   const cwd = text.trim();
-  return cwd === "" ? null : cwd;
+  // The marker must name an absolute path; anything else (including a
+  // relative fragment from a torn write) must not reach a path join.
+  return cwd.startsWith("/") || /^[A-Za-z]:[\\/]/.test(cwd) ? cwd : null;
 }
 
 /**

@@ -71,14 +71,27 @@ export const agentStatusWidget: WidgetDef = {
 
     let phaseSince = Date.now();
     let lastPhase: AgentPhase | null = null;
+    let lastSessionId = "";
 
     store.on("agent", (agent) => {
       if (agent === null) {
         phase.textContent = "NO SIGNAL";
         phase.style.color = "var(--dim)";
+        phase.style.textShadow = "none";
         sub.textContent = "waiting for a session …";
+        turn.textContent = "—";
+        tools.textContent = "—";
+        model.textContent = "—";
+        elapsed.textContent = "—";
+        lastPhase = null;
+        lastSessionId = "";
         setStatus("");
         return;
+      }
+      if (agent.id !== lastSessionId) {
+        // New session: the phase-hold timer must not inherit the old one.
+        lastSessionId = agent.id;
+        lastPhase = null;
       }
       if (agent.phase !== lastPhase) {
         lastPhase = agent.phase;

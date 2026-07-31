@@ -29,8 +29,17 @@ export type TailIo = {
 
 const BACKFILL_BYTES = 128 * 1024;
 const NEWLINE = 0x0a;
+/** Per-read ceiling: bounds peak memory when replaying a large log. The
+ * drain loop below keeps reading until caught up, so per-poll semantics are
+ * unchanged. */
+const READ_CAP_BYTES = 4 * 1024 * 1024;
 
 export class Tail {
+  /** Set when the file shrank underneath us (rewind/rotation). The owner
+   * must rebuild any state folded from this file — the tail itself resumes
+   * per its mode, but counters folded before the truncation are stale. */
+  truncated = false;
+
   private readonly io: TailIo;
   private readonly path: string;
   private readonly startAtEnd: boolean;
@@ -80,8 +89,12 @@ export class Tail {
       }
     }
     if (size < this.offset) {
-      // Truncated or rotated underneath us: return to this tail's own mode
-      // (a start-at-end tail must not replay the whole replacement file).
+      // Truncated or rotated underneath us: flag the owner (its folded
+      // state is now stale), then return to this tail's own mode — a
+      // start-at-end tail re-runs its EOF sentinel (the recursive call
+      // takes the offset === -1 branch above and continues from there);
+      // a replay tail restarts from byte 0.
+      this.truncated = true;
       this.offset = this.startAtEnd ? -1 : 0;
       this.buf = new Uint8Array(0);
       if (this.offset === -1) {
@@ -89,26 +102,31 @@ export class Tail {
         return;
       }
     }
-    if (size === this.offset) return;
 
-    const chunk = await this.io.read(this.path, this.offset, size);
-    if (chunk.length === 0) return;
-    this.offset += chunk.length;
+    // Drain in capped reads: bounds peak memory on a whole-file replay, and
+    // short reads from the IO remain safe because the offset only advances
+    // by bytes actually received.
+    while (this.offset < size) {
+      const end = Math.min(size, this.offset + READ_CAP_BYTES);
+      const chunk = await this.io.read(this.path, this.offset, end);
+      if (chunk.length === 0) return;
+      this.offset += chunk.length;
 
-    const joined = new Uint8Array(this.buf.length + chunk.length);
-    joined.set(this.buf, 0);
-    joined.set(chunk, this.buf.length);
-    this.buf = joined;
+      const joined = new Uint8Array(this.buf.length + chunk.length);
+      joined.set(this.buf, 0);
+      joined.set(chunk, this.buf.length);
+      this.buf = joined;
 
-    const decoder = new TextDecoder();
-    let start = 0;
-    let nl = this.buf.indexOf(NEWLINE, start);
-    while (nl >= 0) {
-      const line = decoder.decode(this.buf.slice(start, nl)).trim();
-      if (line !== "") onLine(line);
-      start = nl + 1;
-      nl = this.buf.indexOf(NEWLINE, start);
+      const decoder = new TextDecoder();
+      let start = 0;
+      let nl = this.buf.indexOf(NEWLINE, start);
+      while (nl >= 0) {
+        const line = decoder.decode(this.buf.slice(start, nl)).trim();
+        if (line !== "") onLine(line);
+        start = nl + 1;
+        nl = this.buf.indexOf(NEWLINE, start);
+      }
+      this.buf = this.buf.slice(start);
     }
-    this.buf = this.buf.slice(start);
   }
 }

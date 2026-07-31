@@ -26,7 +26,9 @@ export const HOOK_EVENT_NAMES = [
 ] as const;
 export type HookEventName = (typeof HOOK_EVENT_NAMES)[number];
 
-const ALIASES: Record<string, HookEventName> = {
+// Null prototype: a config key like "constructor" must miss, not resolve
+// to Object.prototype members.
+const ALIASES: Record<string, HookEventName> = Object.assign(Object.create(null) as Record<string, HookEventName>, {
   session_start: "session_start",
   SessionStart: "session_start",
   sessionStart: "session_start",
@@ -79,7 +81,7 @@ const ALIASES: Record<string, HookEventName> = {
   session_end: "session_end",
   SessionEnd: "session_end",
   sessionEnd: "session_end",
-};
+});
 
 export function parseHookEventName(key: string): HookEventName | null {
   return ALIASES[key] ?? null;
