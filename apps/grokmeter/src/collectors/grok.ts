@@ -1,174 +1,60 @@
 // Live Grok Build session telemetry, by tailing what the agent writes to
 // disk under ~/.grok — no cooperation from the agent process required.
 //
-//   active_sessions.json          → which sessions are alive (pid, cwd)
-//   sessions/<cwd>/<id>/
-//     summary.json                → identity: title, model, git, timestamps
-//     signals.json                → slow extras: context window size, ITL
-//     events.jsonl    (tail)      → phases, tools, permissions, turns, TTFT
-//     updates.jsonl   (tail)      → tool detail, message text, token counter
-//     hunk_records.jsonl (tail)   → agent line churn
-//
-// Appends can tear the final line (healed on next append), and the small
-// JSON files are atomically replaced — so we buffer partial tails, re-stat
-// by path, and skip anything unparseable.
+// All grok interface knowledge (file layout, line schemas, semantics
+// gotchas) lives in the shared packages/grok-harness package; this collector
+// only folds those parsed surfaces into grokmeter's AgentSnapshot.
 
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { num, parseObj, str, sub, type JObj } from "./jsonx.ts";
+import {
+  HOME_FILES,
+  SESSION_FILES,
+  Tail,
+  chunkText,
+  decodeCwdDirname,
+  grokHome,
+  parseActiveSessions,
+  parseEventLine,
+  parseHunkLine,
+  parseSignals,
+  parseSummary,
+  parseUpdateLine,
+  SESSION_ID_RE,
+  sessionDir,
+  sessionsRoot,
+  summarizeRawInput,
+  toolMetaOf,
+  type ActiveSessionEntry,
+  type TailIo,
+} from "../../../../packages/grok-harness/src/index.ts";
 import type { AgentPhase, AgentSnapshot, CollectorEmit, FeedItem, ToolStats } from "../shared/protocol.ts";
 
 type Emit = Pick<CollectorEmit, "agent" | "feed">;
 
-const grokHome = (): string => process.env["GROK_HOME"] ?? join(homedir(), ".grok");
+const home = (): string => grokHome(process.env, homedir(), join);
 
-/** Session ids are UUIDs; anything else must not reach a path join. */
-const SESSION_ID_RE = /^[0-9a-fA-F-]{8,64}$/;
-
-// ── Byte-offset line tail with torn-line tolerance ───────────────────────
-// Byte-oriented on purpose: offsets always count BYTES (stat/slice space),
-// never decoded characters — a UTF-16 length would drift past the first
-// non-ASCII byte — and only complete lines are decoded, so a multi-byte
-// character split across a poll boundary can't be corrupted.
-
-const NEWLINE = 0x0a;
-const BACKFILL_BYTES = 128 * 1024;
-/** Per-read ceiling: bounds peak memory when replaying a large log. The
- * inner loop below keeps reading until caught up, so semantics per poll()
- * are unchanged. */
-const READ_CAP_BYTES = 4 * 1024 * 1024;
-
-async function readBytes(path: string, start: number, end: number): Promise<Uint8Array> {
-  return new Uint8Array(await Bun.file(path).slice(start, end).arrayBuffer());
-}
-
-class Tail {
-  /** Set when the file shrank or was atomically replaced underneath us.
-   * The owner must rebuild any state folded from this file — the tail
-   * itself resumes per its mode, but counters folded before the reset are
-   * stale. */
-  truncated = false;
-
-  private readonly path: string;
-  private readonly startAtEnd: boolean;
-  private offset: number;
-  private buf = new Uint8Array(0);
-  private fileId: string | null = null;
-
-  constructor(path: string, startAtEnd: boolean) {
-    this.path = path;
-    this.startAtEnd = startAtEnd;
-    this.offset = startAtEnd ? -1 : 0; // -1: resolve near EOF on first poll
-  }
-
-  async poll(onLine: (line: string) => void): Promise<void> {
-    // Files can be replaced between the stat and the read; that must cost
-    // one tick, never an unhandled rejection in the caller's timer.
+/** Bun-backed IO for the shared Tail (byte-oriented per the contract). */
+const BUN_IO: TailIo = {
+  stat: async (path) => {
     try {
-      await this.pollInner(onLine);
+      const st = await stat(path);
+      return { size: st.size, id: `${st.dev}:${st.ino}` };
     } catch {
-      // Transient disk race; state only advances after successful reads.
+      return null;
     }
-  }
+  },
+  read: async (path, start, end) => new Uint8Array(await Bun.file(path).slice(start, end).arrayBuffer()),
+};
 
-  private async pollInner(onLine: (line: string) => void): Promise<void> {
-    let size: number;
-    let fileId: string;
-    try {
-      const st = await stat(this.path);
-      size = st.size;
-      fileId = `${st.dev}:${st.ino}`;
-    } catch {
-      return;
-    }
-    // Atomic replacement detection: a rename swaps the inode, and the new
-    // file can be the same size or larger — the shrink check alone would
-    // read garbage from the middle of the replacement.
-    if (this.fileId !== null && fileId !== this.fileId && this.offset > 0) {
-      this.truncated = true;
-      this.offset = this.startAtEnd ? -1 : 0;
-      this.buf = new Uint8Array(0);
-    }
-    this.fileId = fileId;
-    if (this.offset === -1) {
-      // First contact: start 128 KB back so the deck has recent history,
-      // probing forward to a line boundary so we never start mid-line.
-      this.offset = Math.max(0, size - BACKFILL_BYTES);
-      if (this.offset > 0) {
-        while (this.offset < size) {
-          const probe = await readBytes(this.path, this.offset, size);
-          if (probe.length === 0) break;
-          const nl = probe.indexOf(NEWLINE);
-          if (nl >= 0) {
-            this.offset += nl + 1;
-            break;
-          }
-          this.offset += probe.length;
-        }
-      }
-    }
-    if (size < this.offset) {
-      // Truncated or rotated: return to this tail's own mode (a
-      // start-at-end tail must not replay the whole replacement file) and
-      // flag the owner to rebuild folded state.
-      this.truncated = true;
-      this.offset = this.startAtEnd ? -1 : 0;
-      this.buf = new Uint8Array(0);
-      if (this.offset === -1) {
-        await this.pollInner(onLine);
-        return;
-      }
-    }
-
-    while (this.offset < size) {
-      const end = Math.min(size, this.offset + READ_CAP_BYTES);
-      const chunk = await readBytes(this.path, this.offset, end);
-      if (chunk.length === 0) return;
-      this.offset += chunk.length;
-
-      const joined = new Uint8Array(this.buf.length + chunk.length);
-      joined.set(this.buf, 0);
-      joined.set(chunk, this.buf.length);
-      this.buf = joined;
-
-      const decoder = new TextDecoder();
-      let nl = this.buf.indexOf(NEWLINE);
-      while (nl >= 0) {
-        // Trim the buffer BEFORE delivering: if the consumer throws, the
-        // line is already consumed and can't be replayed next poll.
-        const lineBytes = this.buf.slice(0, nl);
-        this.buf = this.buf.slice(nl + 1);
-        const line = decoder.decode(lineBytes).trim();
-        if (line !== "") {
-          try {
-            onLine(line);
-          } catch {
-            // A consumer error must not corrupt tail state.
-          }
-        }
-        nl = this.buf.indexOf(NEWLINE);
-      }
-    }
-  }
+async function readText(path: string): Promise<string> {
+  return Bun.file(path)
+    .text()
+    .catch(() => "");
 }
 
 // ── Session watcher ──────────────────────────────────────────────────────
-
-type ActiveEntry = { sessionId: string; pid: number; cwd: string };
-
-const PHASES: readonly AgentPhase[] = [
-  "idle",
-  "waiting_for_model",
-  "streaming_reasoning",
-  "streaming_text",
-  "tool_execution",
-  "permission_prompt",
-];
-
-function asPhase(v: string): AgentPhase {
-  return (PHASES as readonly string[]).includes(v) ? (v as AgentPhase) : "idle";
-}
 
 class SessionWatch {
   readonly events: Tail;
@@ -227,160 +113,162 @@ class SessionWatch {
     this.dir = dir;
     this.id = id;
     this.cwd = cwd;
-    this.events = new Tail(join(dir, "events.jsonl"), false);
-    this.updates = new Tail(join(dir, "updates.jsonl"), true);
-    this.hunks = new Tail(join(dir, "hunk_records.jsonl"), false);
+    this.events = new Tail(BUN_IO, join(dir, SESSION_FILES.events), false);
+    this.updates = new Tail(BUN_IO, join(dir, SESSION_FILES.updates), true);
+    this.hunks = new Tail(BUN_IO, join(dir, SESSION_FILES.hunkRecords), false);
   }
 
   async refreshMeta(): Promise<void> {
-    const summary = parseObj(await Bun.file(join(this.dir, "summary.json")).text().catch(() => ""));
+    const summary = parseSummary(await readText(join(this.dir, SESSION_FILES.summary)));
     if (summary !== null) {
-      this.title = str(summary["generated_title"], str(summary["session_summary"], "untitled"));
-      this.model = str(summary["current_model_id"], "?");
-      this.agentName = str(summary["agent_name"], "grok");
-      this.reasoningEffort = str(summary["reasoning_effort"], "");
-      this.sandbox = str(summary["sandbox_profile"], "");
-      this.gitBranch = str(summary["head_branch"], "");
-      this.gitCommit = str(summary["head_commit"], "");
-      const created = Date.parse(str(summary["created_at"], ""));
-      if (Number.isFinite(created)) this.createdAt = created;
-      const updated = Date.parse(str(summary["last_active_at"], str(summary["updated_at"], "")));
-      if (Number.isFinite(updated)) this.updatedAt = updated;
+      this.title = summary.title;
+      this.model = summary.modelId;
+      this.agentName = summary.agentName;
+      this.reasoningEffort = summary.reasoningEffort;
+      this.sandbox = summary.sandboxProfile;
+      this.gitBranch = summary.gitBranch;
+      this.gitCommit = summary.gitCommit;
+      if (summary.createdAt > 0) this.createdAt = summary.createdAt;
+      if (summary.lastActiveAt > 0) this.updatedAt = summary.lastActiveAt;
     }
-    const signals = parseObj(await Bun.file(join(this.dir, "signals.json")).text().catch(() => ""));
+    const signals = parseSignals(await readText(join(this.dir, SESSION_FILES.signals)));
     if (signals !== null) {
-      this.contextWindowTokens = num(signals["contextWindowTokens"], this.contextWindowTokens);
-      this.compactionCount = num(signals["compactionCount"], this.compactionCount);
-      this.itlP50 = num(signals["itlP50Ms"], this.itlP50);
-      this.itlP99 = num(signals["itlP99Ms"], this.itlP99);
-      this.errorCount = Math.max(this.errorCount, num(signals["errorCount"], 0));
-      // signals.json can lag far behind the live stream, so it only seeds
-      // the counters before the first updates.jsonl observation.
-      if (this.contextUsedTokens === 0) {
-        this.contextUsedTokens = num(signals["contextTokensUsed"], 0);
-      }
-      if (this.totalTokens === 0) this.totalTokens = num(signals["contextTokensUsed"], 0);
+      // signals.json can lag the live stream by hours: it only seeds the
+      // counters before the first stream observation (window size and ITL
+      // percentiles are the slow-moving values we actually want from it).
+      this.contextWindowTokens = signals.contextWindowTokens > 0 ? signals.contextWindowTokens : this.contextWindowTokens;
+      // Slow-moving fields are null when signals.json omits them: keep the
+      // prior observation in that case (a real zero is applied as-is).
+      if (signals.compactionCount !== null) this.compactionCount = signals.compactionCount;
+      if (signals.itlP50Ms !== null) this.itlP50 = signals.itlP50Ms;
+      if (signals.itlP99Ms !== null) this.itlP99 = signals.itlP99Ms;
+      this.errorCount = Math.max(this.errorCount, signals.errorCount);
+      if (this.contextUsedTokens === 0) this.contextUsedTokens = signals.contextTokensUsed;
+      if (this.totalTokens === 0) this.totalTokens = signals.contextTokensUsed;
     }
   }
 
   foldEvent(line: string, feed: FeedItem[]): void {
-    const ev = parseObj(line);
+    const ev = parseEventLine(line);
     if (ev === null) return;
-    const type = str(ev["type"]);
-    const at = Date.parse(str(ev["ts"])) || Date.now();
 
-    switch (type) {
+    switch (ev.type) {
       case "turn_started": {
-        this.turnCount = Math.max(this.turnCount, num(ev["turn_number"]) + 1);
-        this.turnStartedAt = at;
-        feed.push({ at, kind: "turn", text: `turn ${num(ev["turn_number"]) + 1} · ${str(ev["model_id"], "?")}` });
+        this.turnCount = Math.max(this.turnCount, ev.turnNumber + 1);
+        this.turnStartedAt = ev.at;
+        feed.push({ at: ev.at, kind: "turn", text: `turn ${ev.turnNumber + 1} · ${ev.modelId || "?"}` });
         break;
       }
       case "phase_changed": {
-        this.phase = asPhase(str(ev["phase"]));
+        this.phase = ev.phase;
         break;
       }
       case "first_token": {
         if (this.turnStartedAt > 0) {
-          this.ttft.push(at - this.turnStartedAt);
+          this.ttft.push(ev.at - this.turnStartedAt);
           if (this.ttft.length > 200) this.ttft.shift();
           this.turnStartedAt = 0;
         }
         break;
       }
       case "tool_completed": {
-        const name = str(ev["tool_name"], "?");
-        const ms = num(ev["duration_ms"]);
-        const outcome = str(ev["outcome"], "success");
-        const ok = outcome === "success";
-        const cur = this.tools[name] ?? { count: 0, failures: 0, totalMs: 0 };
+        const ok = ev.outcome === "success";
+        // Only genuine tool failures count: permission denials, hook
+        // denials, cancellations, and followups are policy decisions or
+        // continuations, not the tool breaking.
+        const failed = ev.outcome === "error" || ev.outcome === "invalid_tool";
+        const cur = this.tools[ev.toolName] ?? { count: 0, failures: 0, totalMs: 0 };
         cur.count += 1;
-        cur.totalMs += ms;
-        if (!ok) {
+        cur.totalMs += ev.durationMs;
+        if (failed) {
           cur.failures += 1;
           this.toolFailureCount += 1;
         }
-        this.tools[name] = cur;
-        feed.push({ at, kind: "tool_end", text: ok ? "ok" : outcome.replace(/_/g, " "), tool: name, ok, ms });
+        this.tools[ev.toolName] = cur;
+        feed.push({
+          at: ev.at,
+          kind: "tool_end",
+          text: ok ? "ok" : ev.outcome.replace(/_/g, " "),
+          tool: ev.toolName,
+          ok,
+          ms: ev.durationMs,
+        });
         break;
       }
       case "permission_requested": {
-        const name = str(ev["tool_name"], "?");
         this.permsRequested += 1;
         this.permPending = true;
-        const detail = this.toolDetail.get(name);
+        const detail = this.toolDetail.get(ev.toolName);
         feed.push({
-          at,
+          at: ev.at,
           kind: "perm_req",
-          text: detail !== undefined && at - detail.at < 8000 ? detail.detail : "awaiting approval",
-          tool: name,
+          text: detail !== undefined && ev.at - detail.at < 8000 ? detail.detail : "awaiting approval",
+          tool: ev.toolName,
         });
         break;
       }
       case "permission_resolved": {
-        const decision = str(ev["decision"], "allow");
         this.permPending = false;
-        this.permWaitTotal += num(ev["wait_ms"]);
-        if (decision === "deny") this.permsDenied += 1;
-        if (num(ev["wait_ms"]) > 100) {
-          feed.push({ at, kind: "perm_res", text: decision, tool: str(ev["tool_name"], "?"), ok: decision === "allow" });
+        this.permWaitTotal += ev.waitMs;
+        if (ev.decision === "deny") this.permsDenied += 1;
+        if (ev.waitMs > 100) {
+          feed.push({
+            at: ev.at,
+            kind: "perm_res",
+            text: ev.decision,
+            tool: ev.toolName,
+            ok: ev.decision === "allow",
+          });
         }
         break;
       }
       case "turn_ended": {
-        const outcome = str(ev["outcome"], "completed");
-        feed.push({ at, kind: "turn", text: `turn ${this.turnCount} ${outcome}` });
-        if (outcome === "error") this.errorCount += 1;
+        feed.push({ at: ev.at, kind: "turn", text: `turn ${this.turnCount} ${ev.outcome}` });
+        if (ev.outcome === "error") this.errorCount += 1;
         break;
       }
-      case "mcp_server_connected":
-        feed.push({ at, kind: "mcp", text: `mcp ${str(ev["server_name"], "?")} connected` });
+      case "mcp": {
+        if (ev.subtype === "mcp_server_connected") {
+          feed.push({ at: ev.at, kind: "mcp", text: `mcp ${ev.serverName ?? "?"} connected` });
+        } else if (ev.subtype === "mcp_server_failed") {
+          feed.push({ at: ev.at, kind: "error", text: `mcp ${ev.serverName ?? "?"} failed` });
+        }
         break;
-      case "mcp_server_failed":
-        feed.push({ at, kind: "error", text: `mcp ${str(ev["server_name"], "?")} failed` });
-        break;
+      }
       default:
         break;
     }
   }
 
   foldUpdate(line: string, feed: FeedItem[]): void {
-    const envelope = parseObj(line);
-    if (envelope === null) return;
-    const params = sub(envelope["params"]);
-    if (params === null) return;
-    const update = sub(params["update"]);
-    if (update === null) return;
-    const meta = sub(params["_meta"]);
-    const at = meta !== null ? num(meta["agentTimestampMs"], Date.now()) : Date.now();
-    const kind = str(update["sessionUpdate"]);
+    const env = parseUpdateLine(line);
+    if (env === null) return;
+    // Prefer the agent's own millisecond stamp, then the envelope write
+    // time; never invent "now" for a replayed line.
+    const at = env.agentTimestampMs ?? (env.timestamp > 0 ? env.timestamp * 1000 : Date.now());
 
-    if (meta !== null) {
-      const tokens = num(meta["totalTokens"], -1);
-      if (tokens >= 0) {
-        // Context occupancy tracks the stream (down too, e.g. compaction);
-        // the odometer only ratchets up.
-        this.contextUsedTokens = tokens;
-        if (tokens > this.totalTokens) this.totalTokens = tokens;
-      }
+    if (env.totalTokens !== null && env.totalTokens >= 0) {
+      // Context occupancy tracks the stream (down too, e.g. compaction);
+      // the odometer only ratchets up.
+      this.contextUsedTokens = env.totalTokens;
+      if (env.totalTokens > this.totalTokens) this.totalTokens = env.totalTokens;
     }
 
-    switch (kind) {
+    switch (env.kind) {
       case "tool_call": {
-        const rawInput = sub(update["rawInput"]);
-        const toolMeta = sub(sub(update["_meta"])?.["x.ai/tool"] ?? null);
-        const name = toolMeta !== null ? str(toolMeta["name"], str(update["title"], "?")) : str(update["title"], "?");
-        const detail = rawInput !== null ? summarizeInput(rawInput) : "";
-        const text = detail !== "" ? detail : str(update["title"], name);
+        const meta = toolMetaOf(env.update);
+        const title = typeof env.update["title"] === "string" ? env.update["title"] : "?";
+        const name = meta !== null ? meta.name : title;
+        const detail = summarizeRawInput(env.update);
+        const text = detail !== "" ? detail : title;
         this.toolDetail.set(name, { detail: text, at });
         feed.push({ at, kind: "tool_start", text, tool: name });
         break;
       }
       case "user_message_chunk": {
-        const content = sub(update["content"]);
-        const text = content !== null ? str(content["text"]) : "";
-        if (text.trim() !== "" && text.trim() !== this.lastUserPrompt) {
-          this.lastUserPrompt = text.trim();
+        const text = chunkText(env.update).trim();
+        if (text !== "" && text !== this.lastUserPrompt) {
+          this.lastUserPrompt = text;
           this.userMessages += 1;
           feed.push({ at, kind: "user", text: clip(text, 120) });
         }
@@ -389,17 +277,20 @@ class SessionWatch {
       case "agent_thought_chunk": {
         if (at - this.lastThoughtAt < 2500) break;
         this.lastThoughtAt = at;
-        const content = sub(update["content"]);
-        const text = content !== null ? str(content["text"]) : "";
-        if (text.trim() !== "") feed.push({ at, kind: "thought", text: clip(text, 120) });
+        const text = chunkText(env.update).trim();
+        if (text !== "") feed.push({ at, kind: "thought", text: clip(text, 120) });
         break;
       }
       case "agent_message_chunk": {
         if (at - this.lastMessageAt >= 2500) {
-          this.assistantMessages += 1;
-          const content = sub(update["content"]);
-          const text = content !== null ? str(content["text"]) : "";
-          if (text.trim() !== "") feed.push({ at, kind: "message", text: clip(text, 120) });
+          const text = chunkText(env.update).trim();
+          // An empty chunk shouldn't open (and count) a message burst.
+          if (text !== "") {
+            this.assistantMessages += 1;
+            feed.push({ at, kind: "message", text: clip(text, 120) });
+            this.lastMessageAt = at;
+          }
+          break;
         }
         this.lastMessageAt = at;
         break;
@@ -410,22 +301,12 @@ class SessionWatch {
   }
 
   foldHunk(line: string): void {
-    const rec = parseObj(line);
-    if (rec === null) return;
-    if (str(rec["authorType"]) !== "agent") return;
-    const id = str(rec["hunkId"]);
-    if (id === "") return;
-    // num()/str() coerce invalid fields to 0/""; accepting those would let
-    // a malformed repeat erase a valid contribution and count "" as a file.
-    const rawAdd = rec["linesAdded"];
-    const rawRem = rec["linesRemoved"];
-    const file = str(rec["filePath"]);
-    if (typeof rawAdd !== "number" || typeof rawRem !== "number" || file === "") return;
-    const next = { add: num(rawAdd), rem: num(rawRem), file };
+    const rec = parseHunkLine(line);
+    if (rec === null || rec.authorType !== "agent") return;
     // Records repeat per hunkId as an edit evolves: retract the previous
     // contribution before applying the new one, so the running aggregates
     // stay equal to a full re-sum of hunkTotals.
-    const prev = this.hunkTotals.get(id);
+    const prev = this.hunkTotals.get(rec.hunkId);
     if (prev !== undefined) {
       this.hunkAdded -= prev.add;
       this.hunkRemoved -= prev.rem;
@@ -433,10 +314,10 @@ class SessionWatch {
       if (n <= 0) this.hunkFiles.delete(prev.file);
       else this.hunkFiles.set(prev.file, n);
     }
-    this.hunkTotals.set(id, next);
-    this.hunkAdded += next.add;
-    this.hunkRemoved += next.rem;
-    this.hunkFiles.set(next.file, (this.hunkFiles.get(next.file) ?? 0) + 1);
+    this.hunkTotals.set(rec.hunkId, { add: rec.linesAdded, rem: rec.linesRemoved, file: rec.filePath });
+    this.hunkAdded += rec.linesAdded;
+    this.hunkRemoved += rec.linesRemoved;
+    this.hunkFiles.set(rec.filePath, (this.hunkFiles.get(rec.filePath) ?? 0) + 1);
   }
 
   snapshot(live: boolean): AgentSnapshot {
@@ -496,36 +377,10 @@ function clip(text: string, max: number): string {
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
 
-function summarizeInput(raw: JObj): string {
-  for (const key of ["command", "pattern", "file_path", "path", "query", "url", "prompt", "description"]) {
-    const v = raw[key];
-    if (typeof v === "string" && v.trim() !== "") return clip(v, 110);
-  }
-  return "";
-}
-
 // ── Discovery ────────────────────────────────────────────────────────────
 
-async function readActiveSessions(): Promise<ActiveEntry[]> {
-  const parsedText = await Bun.file(join(grokHome(), "active_sessions.json")).text().catch(() => "");
-  try {
-    const arr: unknown = JSON.parse(parsedText);
-    if (!Array.isArray(arr)) return [];
-    const out: ActiveEntry[] = [];
-    for (const item of arr) {
-      if (typeof item !== "object" || item === null) continue;
-      const o = item as JObj;
-      const sessionId = str(o["session_id"]);
-      const cwd = str(o["cwd"]);
-      // cwd must be an absolute path: a relative value (even "..") would
-      // otherwise flow into a path join under the sessions root.
-      if (!SESSION_ID_RE.test(sessionId) || !cwd.startsWith("/")) continue;
-      out.push({ sessionId, pid: num(o["pid"]), cwd });
-    }
-    return out;
-  } catch {
-    return [];
-  }
+async function readActive(): Promise<ActiveSessionEntry[]> {
+  return parseActiveSessions(await readText(join(home(), HOME_FILES.activeSessions)));
 }
 
 function pidAlive(pid: number): boolean {
@@ -538,28 +393,23 @@ function pidAlive(pid: number): boolean {
   }
 }
 
-async function findSessionDir(cwd: string, sessionId: string): Promise<string | null> {
-  if (!SESSION_ID_RE.test(sessionId)) return null;
-  const root = join(grokHome(), "sessions");
-  const direct = join(root, encodeURIComponent(cwd), sessionId);
+async function findSessionDir(cwd: string, id: string): Promise<string | null> {
+  const direct = sessionDir(home(), cwd, id, join);
+  // sessionDir returns null for invalid ids — never path-join raw ids.
+  if (direct === null) return null;
   try {
-    await stat(join(direct, "summary.json"));
+    await stat(join(direct, SESSION_FILES.summary));
     return direct;
   } catch {
     // Fall through to a scan (encoding edge cases, e.g. >255-byte cwds).
   }
+  const root = sessionsRoot(home(), join);
   try {
     for (const entry of await readdir(root)) {
-      let decoded = "";
+      if (decodeCwdDirname(entry) !== cwd) continue;
+      const dir = join(root, entry, id);
       try {
-        decoded = decodeURIComponent(entry);
-      } catch {
-        continue;
-      }
-      if (decoded !== cwd) continue;
-      const dir = join(root, entry, sessionId);
-      try {
-        await stat(join(dir, "summary.json"));
+        await stat(join(dir, SESSION_FILES.summary));
         return dir;
       } catch {
         continue;
@@ -571,7 +421,6 @@ async function findSessionDir(cwd: string, sessionId: string): Promise<string | 
   return null;
 }
 
-/** Most recently touched session on disk, for when nothing is live. */
 /** The fallback scan readdirs every cwd bucket and stats every summary —
  * hundreds of syscalls. The answer rarely changes while idle, and idle is
  * where the deck lives, so cache it briefly. */
@@ -581,9 +430,10 @@ let recentScanCache: { at: number; value: { dir: string; id: string; cwd: string
 };
 const RECENT_SCAN_TTL_MS = 15_000;
 
+/** Most recently touched session on disk, for when nothing is live. */
 async function findRecentSession(): Promise<{ dir: string; id: string; cwd: string } | null> {
   if (Date.now() - recentScanCache.at < RECENT_SCAN_TTL_MS) return recentScanCache.value;
-  const root = join(grokHome(), "sessions");
+  const root = sessionsRoot(home(), join);
   let best: { dir: string; id: string; cwd: string; mtime: number } | null = null;
   let cwdDirs: string[] = [];
   try {
@@ -592,13 +442,8 @@ async function findRecentSession(): Promise<{ dir: string; id: string; cwd: stri
     return null;
   }
   for (const cwdDir of cwdDirs) {
-    let decoded = "";
-    try {
-      decoded = decodeURIComponent(cwdDir);
-    } catch {
-      continue;
-    }
-    if (!decoded.startsWith("/")) continue;
+    const decoded = decodeCwdDirname(cwdDir);
+    if (decoded === null) continue;
     const base = join(root, cwdDir);
     let ids: string[] = [];
     try {
@@ -607,12 +452,13 @@ async function findRecentSession(): Promise<{ dir: string; id: string; cwd: stri
       continue;
     }
     for (const id of ids) {
+      // `base` is authoritative here (long cwds encode differently on disk);
+      // the id just has to be a valid session id before any path join.
       if (!SESSION_ID_RE.test(id)) continue;
-      const dir = join(base, id);
       try {
-        const s = await stat(join(dir, "summary.json"));
+        const s = await stat(join(base, id, SESSION_FILES.summary));
         if (best === null || s.mtimeMs > best.mtime) {
-          best = { dir, id, cwd: decoded, mtime: s.mtimeMs };
+          best = { dir: join(base, id), id, cwd: decoded, mtime: s.mtimeMs };
         }
       } catch {
         continue;
@@ -654,7 +500,7 @@ export function startGrok(emit: Emit): void {
 
   // Discovery loop: prefer a live session (freshest events file wins).
   const discover = async (): Promise<void> => {
-    const active = (await readActiveSessions()).filter((a) => pidAlive(a.pid));
+    const active = (await readActive()).filter((a) => pidAlive(a.pid));
     let target: { dir: string; id: string; cwd: string; live: boolean } | null = null;
 
     let bestMtime = -1;
@@ -663,7 +509,7 @@ export function startGrok(emit: Emit): void {
       if (dir === null) continue;
       let mtime = 0;
       try {
-        mtime = (await stat(join(dir, "events.jsonl"))).mtimeMs;
+        mtime = (await stat(join(dir, SESSION_FILES.events))).mtimeMs;
       } catch {
         mtime = 0;
       }
@@ -690,6 +536,7 @@ export function startGrok(emit: Emit): void {
       watchLive = target.live;
     }
   };
+
   // Both loop bodies are async on fixed timers: an in-flight latch keeps a
   // slow poll from re-entering Tail.poll and double-folding a byte range.
   let discovering = false;
@@ -722,8 +569,8 @@ export function startGrok(emit: Emit): void {
       if (watch !== w) return; // session switched mid-poll; drop stale output
       if (w.events.truncated || w.updates.truncated || w.hunks.truncated) {
         // A source file shrank (rewind/rotation): counters folded from it
-        // are stale, so rebuild the watch from scratch instead of folding
-        // the replay into already-populated state.
+        // are stale, so rebuild the watch instead of folding a replay into
+        // already-populated state.
         await attach(w.dir, w.id, w.cwd, watchLive);
         return;
       }

@@ -44,3 +44,8 @@ record.
   X post URLs only after publication is verified.
 - Read an app's README and nearest nested `AGENTS.md` for its exact commands
   and contracts.
+- `packages/grok-harness/` is the single source of truth for grok-build CLI
+  session interfaces (disk session files, ACP update stream, leader socket,
+  headless output, tool taxonomy). Apps consume it by relative import and
+  must not inline grok interface knowledge; when grok-build changes, update
+  the package first.

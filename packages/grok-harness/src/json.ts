@@ -1,16 +1,20 @@
-// Tolerant JSON helpers for tailing files other processes are writing.
-// Torn lines and unexpected shapes are normal; never throw, never trust.
+// Tolerant JSON helpers for reading files another process owns.
+// Torn lines and unexpected shapes are normal operating conditions for the
+// grok-build session surfaces: never throw, never trust.
 
 export type JObj = Record<string, unknown>;
 
 export function parseObj(line: string): JObj | null {
   try {
     const v: unknown = JSON.parse(line);
-    if (typeof v === "object" && v !== null && !Array.isArray(v)) return v as JObj;
-    return null;
+    return isObj(v) ? v : null;
   } catch {
     return null;
   }
+}
+
+export function isObj(v: unknown): v is JObj {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 export function num(v: unknown, d = 0): number {
@@ -26,5 +30,5 @@ export function bool(v: unknown, d = false): boolean {
 }
 
 export function sub(v: unknown): JObj | null {
-  return typeof v === "object" && v !== null && !Array.isArray(v) ? (v as JObj) : null;
+  return isObj(v) ? v : null;
 }

@@ -86,9 +86,12 @@ sessions/<cwd>/<id>/
   hunk_records.jsonl  (tail)    per-hunk agent line attribution
 ```
 
-The tailer resumes from byte offsets, tolerates torn final lines (the
-harness heals them on next append), re-stats atomically-replaced files by
-path, and rebuilds counters by replaying the event log on attach. It prefers
+The schemas, parsers, and tailer for these surfaces come from the shared
+[`packages/grok-harness`](../../packages/grok-harness/) package — the repo's
+single source of truth for grok-build interfaces. The tailer resumes from
+byte offsets, tolerates torn final lines (the harness heals them on next
+append), re-stats atomically-replaced files by path, and rebuilds counters
+by replaying the event log on attach. It prefers
 the live session with the freshest event file, and falls back to the most
 recently active session on disk (shown as non-live) when nothing is running.
 Demo mode emits the exact same wire protocol, so the UI cannot tell the
