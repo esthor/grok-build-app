@@ -38,12 +38,13 @@ export const latencyWidget: WidgetDef = {
         setStatus("");
         return;
       }
-      ttftAvg.textContent = Math.round(agent.ttftAvgMs).toString();
-      ttftMin.textContent = Math.round(agent.ttftMinMs).toString();
-      ttftMax.textContent = Math.round(agent.ttftMaxMs).toString();
-      itlP50.textContent = Math.round(agent.itlP50Ms).toString();
-      itlP99.textContent = Math.round(agent.itlP99Ms).toString();
-      turns.textContent = agent.turnCount.toString();
+      const ms = (v: number): string => (Number.isFinite(v) ? Math.round(v).toString() : "—");
+      ttftAvg.textContent = ms(agent.ttftAvgMs);
+      ttftMin.textContent = ms(agent.ttftMinMs);
+      ttftMax.textContent = ms(agent.ttftMaxMs);
+      itlP50.textContent = ms(agent.itlP50Ms);
+      itlP99.textContent = ms(agent.itlP99Ms);
+      turns.textContent = Number.isFinite(agent.turnCount) ? agent.turnCount.toString() : "—";
       setStatus(agent.ttftAvgMs > 8000 ? "warn" : "ok");
     });
     return undefined;
