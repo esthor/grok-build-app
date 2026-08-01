@@ -19,9 +19,16 @@ declare class TextDecoder {
   decode(input: Uint8Array): string;
 }
 
+export type TailStat = {
+  size: number;
+  /** Stable file identity (e.g. `dev:ino`), or null when the runtime can't
+   * provide one. Identity changes signal atomic replacement. */
+  id: string | null;
+};
+
 export type TailIo = {
-  /** Size of the file in bytes, or null if it does not exist. */
-  size: (path: string) => Promise<number | null>;
+  /** Stat the file, or null if it does not exist. */
+  stat: (path: string) => Promise<TailStat | null>;
   /** Read bytes from [start, end). Returning FEWER bytes than requested is
    * allowed; the tailer advances by what it actually received. */
   read: (path: string, start: number, end: number) => Promise<Uint8Array>;
@@ -35,9 +42,10 @@ const NEWLINE = 0x0a;
 const READ_CAP_BYTES = 4 * 1024 * 1024;
 
 export class Tail {
-  /** Set when the file shrank underneath us (rewind/rotation). The owner
-   * must rebuild any state folded from this file — the tail itself resumes
-   * per its mode, but counters folded before the truncation are stale. */
+  /** Set when the file shrank or was atomically replaced underneath us.
+   * The owner must rebuild any state folded from this file — the tail
+   * itself resumes per its mode, but counters folded before the reset are
+   * stale. */
   truncated = false;
 
   private readonly io: TailIo;
@@ -45,6 +53,7 @@ export class Tail {
   private readonly startAtEnd: boolean;
   private offset: number;
   private buf = new Uint8Array(0);
+  private fileId: string | null = null;
 
   /** startAtEnd: begin ~128 KB before EOF (skipping the first partial line)
    * instead of replaying the whole file. */
@@ -67,8 +76,19 @@ export class Tail {
   }
 
   private async pollInner(onLine: (line: string) => void): Promise<void> {
-    const size = await this.io.size(this.path);
-    if (size === null) return;
+    const st = await this.io.stat(this.path);
+    if (st === null) return;
+    const size = st.size;
+
+    // Atomic replacement detection: a rename swaps the file identity, and
+    // the replacement can be the same size or larger — the shrink check
+    // alone would read garbage from the middle of the new file.
+    if (this.fileId !== null && st.id !== null && st.id !== this.fileId && this.offset > 0) {
+      this.truncated = true;
+      this.offset = this.startAtEnd ? -1 : 0;
+      this.buf = new Uint8Array(0);
+    }
+    if (st.id !== null) this.fileId = st.id;
 
     if (this.offset === -1) {
       this.offset = Math.max(0, size - BACKFILL_BYTES);
@@ -118,15 +138,22 @@ export class Tail {
       this.buf = joined;
 
       const decoder = new TextDecoder();
-      let start = 0;
-      let nl = this.buf.indexOf(NEWLINE, start);
+      let nl = this.buf.indexOf(NEWLINE);
       while (nl >= 0) {
-        const line = decoder.decode(this.buf.slice(start, nl)).trim();
-        if (line !== "") onLine(line);
-        start = nl + 1;
-        nl = this.buf.indexOf(NEWLINE, start);
+        // Trim the buffer BEFORE delivering: if the consumer throws, the
+        // line is already consumed and can't be replayed next poll.
+        const lineBytes = this.buf.slice(0, nl);
+        this.buf = this.buf.slice(nl + 1);
+        const line = decoder.decode(lineBytes).trim();
+        if (line !== "") {
+          try {
+            onLine(line);
+          } catch {
+            // A consumer error must not corrupt tail state.
+          }
+        }
+        nl = this.buf.indexOf(NEWLINE);
       }
-      this.buf = this.buf.slice(start);
     }
   }
 }

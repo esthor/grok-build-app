@@ -41,6 +41,17 @@ import {
 import { parseObj, str } from "./src/json.ts";
 
 const HOME = grokHome(process.env, homedir(), join);
+
+/** parseObj conflates malformed JSON with valid non-object values; the
+ * torn-line tolerance below only forgives the former. */
+function isValidJson(line: string): boolean {
+  try {
+    JSON.parse(line);
+    return true;
+  } catch {
+    return false;
+  }
+}
 const SESSIONS = join(HOME, "sessions");
 
 const TOOL_OUTCOME_SET = new Set<string>(TOOL_OUTCOMES);
@@ -155,9 +166,10 @@ for (const s of sessions) {
   if (decodedCwd !== null && summary.cwd !== decodedCwd) {
     fail(`${s.id}: summary.cwd ${summary.cwd} ≠ dirname ${decodedCwd}`);
   }
-  // Brand-new sessions can briefly lack a generated title; only fail if both
-  // identity fields are empty after we already parsed the file.
-  if (summary.modelId === "?" && summary.title === "") {
+  // Brand-new sessions can briefly lack a generated title; only note it when
+  // both identity fields are at their parser defaults ("untitled" is the
+  // title default — an empty string can never surface).
+  if (summary.modelId === "?" && summary.title === "untitled") {
     console.log(`  · ${s.id}: summary still untitled/unknown model (tolerated for fresh sessions)`);
   }
 
@@ -218,7 +230,7 @@ for (const s of sessions) {
     if (env === null) {
       // Only valid-JSON lines count as parser rejections; torn lines are
       // the writer contract, same tolerance as the events loop.
-      if (parseObj(line) !== null) {
+      if (isValidJson(line)) {
         updateNulls += 1;
         fail(`${s.id}: update envelope rejected: ${line.slice(0, 90)}`);
       }
@@ -261,7 +273,7 @@ for (const s of sessions) {
 
   for (const line of await lines(join(s.dir, SESSION_FILES.hunkRecords))) {
     hunkLines += 1;
-    if (parseHunkLine(line) === null && parseObj(line) !== null) {
+    if (parseHunkLine(line) === null && isValidJson(line)) {
       hunkNulls += 1;
       fail(`${s.id}: hunk line rejected: ${line.slice(0, 90)}`);
     }
@@ -274,9 +286,10 @@ for (const s of sessions) {
   if (target !== undefined && (await exists(target))) {
     const direct = await lines(target);
     const drip: TailIo = {
-      size: async (p) => {
+      stat: async (p) => {
         try {
-          return (await stat(p)).size;
+          const st = await stat(p);
+          return { size: st.size, id: `${st.dev}:${st.ino}` };
         } catch {
           return null;
         }
