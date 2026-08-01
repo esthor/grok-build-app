@@ -282,9 +282,28 @@ for (const s of sessions) {
 
 // Tail equivalence under 1KB short reads
 {
-  const target = sessions.map((s) => join(s.dir, SESSION_FILES.events)).find(() => true);
-  if (target !== undefined && (await exists(target))) {
-    const direct = await lines(target);
+  // Pick the first session that actually has an events log, and report a
+  // skip rather than letting a silent no-op read as a passing check.
+  let target: string | undefined;
+  for (const s of sessions) {
+    const candidate = join(s.dir, SESSION_FILES.events);
+    if (await exists(candidate)) {
+      target = candidate;
+      break;
+    }
+  }
+  if (target === undefined) {
+    console.log("tail: skipped — no session has an events.jsonl");
+  } else {
+    // Bound BOTH sides to one size snapshot: a live session appends
+    // between the reads, and the extra lines would look like divergence.
+    const st = await stat(target).catch(() => null);
+    if (st === null) {
+      console.log("tail: skipped — target disappeared mid-run");
+    } else {
+    const size = st.size;
+    const directText = await Bun.file(target).slice(0, size).text().catch(() => "");
+    const direct = directText.split("\n").filter((l) => l.trim() !== "");
     const drip: TailIo = {
       stat: async (p) => {
         try {
@@ -299,7 +318,6 @@ for (const s of sessions) {
     };
     const tail = new Tail(drip, target, false);
     const collected: string[] = [];
-    const size = (await stat(target)).size;
     for (let i = 0; i <= Math.ceil(size / 1024) + 2; i += 1) {
       await tail.poll((l) => collected.push(l));
     }
@@ -309,10 +327,12 @@ for (const s of sessions) {
       // "Identical" must mean contents, not just counts.
       const diverged = collected.findIndex((l, i) => l !== (direct[i] ?? "").trim());
       if (diverged >= 0) {
-        fail(`Tail equivalence: line ${diverged} differs between drip-feed and direct read`);
+        // 1-based: matches what a reader counts in the file.
+        fail(`Tail equivalence: line ${diverged + 1} differs between drip-feed and direct read`);
       } else {
         console.log(`tail: ${collected.length} lines identical via 1 KB drip-feed reads`);
       }
+    }
     }
   }
 }

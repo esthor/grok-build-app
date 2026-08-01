@@ -11,10 +11,13 @@
 // - params._meta.totalTokens is context occupancy (bytes/4), drops on compaction.
 
 import { num, parseObj, str, sub, type JObj } from "./json.ts";
+import { ACP_SESSION_UPDATE, XAI_SESSION_UPDATE } from "./methods.ts";
 import type { CanonicalToolMeta } from "./tools.ts";
 
-export const ACP_UPDATE_METHOD = "session/update";
-export const XAI_UPDATE_METHOD = "_x.ai/session/update";
+// Method literals live in methods.ts; these names stay as this module's
+// established API surface.
+export const ACP_UPDATE_METHOD = ACP_SESSION_UPDATE;
+export const XAI_UPDATE_METHOD = XAI_SESSION_UPDATE;
 export const TOOL_META_KEY = "x.ai/tool";
 
 /** ACP standard sessionUpdate kinds (agent-client-protocol). */

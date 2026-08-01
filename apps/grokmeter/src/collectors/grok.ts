@@ -85,6 +85,11 @@ class SessionWatch {
   ttft: number[] = [];
   turnStartedAt = 0;
   hunkTotals = new Map<string, { add: number; rem: number; file: string }>();
+  /** Running aggregates over hunkTotals, updated on fold instead of being
+   * recomputed on every 900 ms snapshot. */
+  private hunkAdded = 0;
+  private hunkRemoved = 0;
+  private hunkFiles = new Map<string, number>();
   lastThoughtAt = 0;
   lastMessageAt = 0;
   lastUserPrompt = "";
@@ -176,10 +181,10 @@ class SessionWatch {
       }
       case "tool_completed": {
         const ok = ev.outcome === "success";
-        // Only genuine tool failures count as failures: permission denials,
-        // cancellations, and followups are user decisions or continuations,
-        // not the tool breaking.
-        const failed = ev.outcome === "error" || ev.outcome === "invalid_tool" || ev.outcome === "hook_denied";
+        // Only genuine tool failures count: permission denials, hook
+        // denials, cancellations, and followups are policy decisions or
+        // continuations, not the tool breaking.
+        const failed = ev.outcome === "error" || ev.outcome === "invalid_tool";
         const cur = this.tools[ev.toolName] ?? { count: 0, failures: 0, totalMs: 0 };
         cur.count += 1;
         cur.totalMs += ev.durationMs;
@@ -310,14 +315,9 @@ class SessionWatch {
   }
 
   snapshot(live: boolean): AgentSnapshot {
-    let linesAdded = 0;
-    let linesRemoved = 0;
-    const files = new Set<string>();
-    for (const h of this.hunkTotals.values()) {
-      linesAdded += h.add;
-      linesRemoved += h.rem;
-      files.add(h.file);
-    }
+    const linesAdded = this.hunkAdded;
+    const linesRemoved = this.hunkRemoved;
+    const filesTouched = this.hunkFiles.size;
     const toolCallCount = Object.values(this.tools).reduce((a, t) => a + t.count, 0);
     const ttftAvg = this.ttft.length > 0 ? this.ttft.reduce((a, b) => a + b, 0) / this.ttft.length : 0;
     const ttftMin = this.ttft.reduce((a, b) => Math.min(a, b), this.ttft[0] ?? 0);
@@ -354,7 +354,7 @@ class SessionWatch {
       itlP99Ms: this.itlP99,
       linesAdded,
       linesRemoved,
-      filesTouched: files.size,
+      filesTouched,
       gitBranch: this.gitBranch,
       gitCommit: this.gitCommit,
       tools: this.tools,

@@ -45,6 +45,9 @@ export const mediaWidget: WidgetDef = {
       if (media === null) {
         track.textContent = "no signal";
         artist.textContent = "";
+        fill.style.width = "0%";
+        pos.textContent = "—";
+        dur.textContent = "—";
         playing = false;
         setStatus("");
         return;

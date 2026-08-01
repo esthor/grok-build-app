@@ -7,7 +7,7 @@
 // never as the live counter source — fold events.jsonl/updates.jsonl for
 // anything that moves.
 
-import { num, parseObj, str, type JObj } from "./json.ts";
+import { num, parseObj, str, sub, type JObj } from "./json.ts";
 import { SESSION_ID_RE } from "./paths.ts";
 
 /** One entry of ~/.grok/active_sessions.json (xai-grok-shell
@@ -77,7 +77,7 @@ export type SessionSummary = {
 export function parseSummary(text: string): SessionSummary | null {
   const o = parseObj(text);
   if (o === null) return null;
-  const info = typeof o["info"] === "object" && o["info"] !== null ? (o["info"] as JObj) : null;
+  const info = sub(o["info"]);
   const created = Date.parse(str(o["created_at"]));
   const updated = Date.parse(str(o["updated_at"]));
   const lastActive = Date.parse(str(o["last_active_at"]));

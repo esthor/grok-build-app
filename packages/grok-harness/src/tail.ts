@@ -137,13 +137,16 @@ export class Tail {
       joined.set(chunk, this.buf.length);
       this.buf = joined;
 
+      // Scan with a cursor and slice once at the end: re-slicing the whole
+      // buffer per line is quadratic on a large replay chunk. `consumed`
+      // advances before each delivery, so a throwing consumer can't cause
+      // an already-delivered line to replay.
       const decoder = new TextDecoder();
-      let nl = this.buf.indexOf(NEWLINE);
+      let consumed = 0;
+      let nl = this.buf.indexOf(NEWLINE, consumed);
       while (nl >= 0) {
-        // Trim the buffer BEFORE delivering: if the consumer throws, the
-        // line is already consumed and can't be replayed next poll.
-        const lineBytes = this.buf.slice(0, nl);
-        this.buf = this.buf.slice(nl + 1);
+        const lineBytes = this.buf.subarray(consumed, nl);
+        consumed = nl + 1;
         const line = decoder.decode(lineBytes).trim();
         if (line !== "") {
           try {
@@ -152,8 +155,9 @@ export class Tail {
             // A consumer error must not corrupt tail state.
           }
         }
-        nl = this.buf.indexOf(NEWLINE);
+        nl = this.buf.indexOf(NEWLINE, consumed);
       }
+      this.buf = consumed > 0 ? this.buf.slice(consumed) : this.buf;
     }
   }
 }

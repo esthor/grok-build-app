@@ -77,6 +77,7 @@ export function fmtBps(n: number): string {
 }
 
 export function fmtTokens(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return "—";
   const trim = (s: string): string => s.replace(/\.0+$/, "");
   if (n >= 1e6) return `${trim((n / 1e6).toFixed(2))}M`;
   if (n >= 1e3) return `${trim((n / 1e3).toFixed(1))}k`;
@@ -184,6 +185,12 @@ export class Ring {
     if (this.filled < this.cap) this.filled += 1;
   }
 
+  reset(): void {
+    this.buf.fill(0);
+    this.idx = 0;
+    this.filled = 0;
+  }
+
   values(): number[] {
     const out: number[] = [];
     const start = (this.idx - this.filled + this.cap) % this.cap;
@@ -210,6 +217,15 @@ export class Spark {
 
   push(v: number): void {
     this.ring.push(v);
+  }
+
+  /** Wipe the canvas and history — call when the data source goes absent so
+   * a dead session's trace doesn't linger. */
+  clear(): void {
+    this.ring.reset();
+    const c = this.canvas;
+    const ctx = c.getContext("2d");
+    if (ctx !== null) ctx.clearRect(0, 0, c.width, c.height);
   }
 
   /** Draw with a CSS color; scales to max of the window (min floor avoids flatlines). */

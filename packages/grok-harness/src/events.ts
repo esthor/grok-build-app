@@ -288,7 +288,9 @@ export function parseEventLine(line: string): GrokEvent | null {
         type,
         at: ts,
         toolName: str(o["tool_name"], "?"),
-        decision: asPermissionDecision(raw) ?? "allow",
+        // Conservative fallback: an unmodeled decision is neither an
+        // approval nor a denial, and must never read as "granted".
+        decision: asPermissionDecision(raw) ?? "cancelled",
         waitMs: num(o["wait_ms"]),
       };
     }
