@@ -40,7 +40,7 @@ export const diskWidget: WidgetDef = {
       fill.className = frac > 0.92 ? "bar-fill bad" : frac > 0.8 ? "bar-fill warn" : "bar-fill";
       v.textContent = `${fmtBytes(sys.disk.usedBytes)} / ${fmtBytes(sys.disk.totalBytes)}`;
       v2.textContent = fmtBytes(sys.disk.totalBytes - sys.disk.usedBytes);
-      setStatus(frac > 0.92 ? "bad" : "ok");
+      setStatus(frac > 0.92 ? "bad" : frac > 0.8 ? "warn" : "ok");
     });
     return undefined;
   },

@@ -44,6 +44,7 @@ export const missionWidget: WidgetDef = {
     store.on("agent", (agent) => {
       if (agent === null) {
         title.textContent = "NO ACTIVE MISSION";
+        for (const cell of [cwd, git, model, sandbox, session]) cell.textContent = "—";
         setStatus("");
         return;
       }

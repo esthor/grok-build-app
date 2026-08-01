@@ -16,7 +16,7 @@ export const tokenFlowWidget: WidgetDef = {
     top.style.alignItems = "baseline";
     const total = el("span", "display-num", "—");
     total.style.fontSize = "28px";
-    const rate = el("span", "", "0 tok/s");
+    const rate = el("span", "", "—");
     rate.style.fontSize = "11px";
     rate.style.color = "var(--dim)";
     rate.style.fontVariantNumeric = "tabular-nums";
@@ -37,6 +37,7 @@ export const tokenFlowWidget: WidgetDef = {
         total.textContent = "—";
         rate.textContent = "—";
         rate.style.color = "var(--dim)";
+        spark.clear();
         lastTokens = -1;
         lastAt = 0;
         setStatus("");
