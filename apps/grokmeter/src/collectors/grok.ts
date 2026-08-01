@@ -306,10 +306,6 @@ class SessionWatch {
     // Records repeat per hunkId as an edit evolves: retract the previous
     // contribution before applying the new one, so the running aggregates
     // stay equal to a full re-sum of hunkTotals.
-    // parseHunkLine defaults missing numerics/paths; accepting those would
-    // let a malformed repeat erase a valid contribution.
-    if (!Number.isFinite(rec.linesAdded) || !Number.isFinite(rec.linesRemoved)) return;
-    if (rec.filePath === "") return;
     const prev = this.hunkTotals.get(rec.hunkId);
     if (prev !== undefined) {
       this.hunkAdded -= prev.add;
