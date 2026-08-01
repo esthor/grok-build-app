@@ -415,11 +415,13 @@ class SessionWatch {
     if (str(rec["authorType"]) !== "agent") return;
     const id = str(rec["hunkId"]);
     if (id === "") return;
-    const next = {
-      add: num(rec["linesAdded"]),
-      rem: num(rec["linesRemoved"]),
-      file: str(rec["filePath"]),
-    };
+    // num()/str() coerce invalid fields to 0/""; accepting those would let
+    // a malformed repeat erase a valid contribution and count "" as a file.
+    const rawAdd = rec["linesAdded"];
+    const rawRem = rec["linesRemoved"];
+    const file = str(rec["filePath"]);
+    if (typeof rawAdd !== "number" || typeof rawRem !== "number" || file === "") return;
+    const next = { add: num(rawAdd), rem: num(rawRem), file };
     // Records repeat per hunkId as an edit evolves: retract the previous
     // contribution before applying the new one, so the running aggregates
     // stay equal to a full re-sum of hunkTotals.
