@@ -173,10 +173,10 @@ class SessionWatch {
       }
       case "tool_completed": {
         const ok = ev.outcome === "success";
-        // Only genuine tool failures count as failures: permission denials,
-        // cancellations, and followups are user decisions or continuations,
-        // not the tool breaking.
-        const failed = ev.outcome === "error" || ev.outcome === "invalid_tool" || ev.outcome === "hook_denied";
+        // Only genuine tool failures count: permission denials, hook
+        // denials, cancellations, and followups are policy decisions or
+        // continuations, not the tool breaking.
+        const failed = ev.outcome === "error" || ev.outcome === "invalid_tool";
         const cur = this.tools[ev.toolName] ?? { count: 0, failures: 0, totalMs: 0 };
         cur.count += 1;
         cur.totalMs += ev.durationMs;

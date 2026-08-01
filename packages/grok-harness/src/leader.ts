@@ -228,15 +228,18 @@ export class LeaderDeframer {
 
     const out: LeaderServerMessage[] = [];
     while (this.buffered >= 4) {
-      const buf = this.coalesce();
-      const len = new DataView(buf.buffer, buf.byteOffset).getUint32(0, false);
+      // Read the length prefix without coalescing: buffering a large frame
+      // across many chunks would otherwise copy the whole buffer per push.
+      const len = this.readLengthPrefix();
+      if (len === null) break;
       if (len > LEADER_MAX_MESSAGE_SIZE) {
         this.poisoned = true;
         this.chunks = [];
         this.buffered = 0;
         throw new Error(`leader frame length ${len} exceeds max ${LEADER_MAX_MESSAGE_SIZE}`);
       }
-      if (buf.length < 4 + len) break;
+      if (this.buffered < 4 + len) break;
+      const buf = this.coalesce();
       const body = buf.slice(4, 4 + len);
       const rest = buf.slice(4 + len);
       this.chunks = rest.length > 0 ? [rest] : [];
@@ -251,6 +254,21 @@ export class LeaderDeframer {
       }
     }
     return out;
+  }
+
+  /** First four bytes as a big-endian u32, without joining the chunks. */
+  private readLengthPrefix(): number | null {
+    const head = new Uint8Array(4);
+    let got = 0;
+    for (const c of this.chunks) {
+      for (let i = 0; i < c.length && got < 4; i += 1) {
+        head[got] = c[i] ?? 0;
+        got += 1;
+      }
+      if (got === 4) break;
+    }
+    if (got < 4) return null;
+    return new DataView(head.buffer).getUint32(0, false);
   }
 
   private coalesce(): Uint8Array {
