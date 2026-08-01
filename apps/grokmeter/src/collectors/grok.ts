@@ -112,6 +112,9 @@ class SessionWatch {
 
   /** Recent feed items for this session, kept so focus switches can backfill. */
   readonly ring: FeedItem[] = [];
+  /** Timestamp of the newest ring item already streamed to the deck, so a
+   * refocus backfills only what the user hasn't seen. */
+  lastStreamedAt = 0;
 
   readonly dir: string;
   readonly id: string;
@@ -491,13 +494,18 @@ export function startGrok(emit: Emit): GrokHandle {
 
   const emitFocus = (entry: { watch: SessionWatch; live: boolean }): void => {
     const w = entry.watch;
+    // Backfill only items newer than what this session already streamed:
+    // refocusing must not re-inject old history as if it just happened.
+    const backfill = w.ring.filter((item) => item.at > w.lastStreamedAt).slice(-30);
+    const newest = backfill[backfill.length - 1];
+    if (newest !== undefined) w.lastStreamedAt = Math.max(w.lastStreamedAt, newest.at);
     emit.feed([
       {
         at: Date.now(),
         kind: "phase",
         text: `▶ focused ${w.id.slice(0, 8)} · ${w.cwd.split("/").pop() ?? w.cwd}`,
       },
-      ...w.ring.slice(-30),
+      ...backfill,
     ]);
     emit.agent(w.snapshot(entry.live));
   };
@@ -641,7 +649,11 @@ export function startGrok(emit: Emit): GrokHandle {
         if (fresh.length === 0) continue;
         fresh.sort((a, b) => a.at - b.at);
         pushRing(w.ring, fresh);
-        if (w.id === focusedId) emit.feed(fresh);
+        if (w.id === focusedId) {
+          const newest = fresh[fresh.length - 1];
+          if (newest !== undefined) w.lastStreamedAt = Math.max(w.lastStreamedAt, newest.at);
+          emit.feed(fresh);
+        }
       }
       const entry = focused();
       if (entry !== null) emit.agent(entry.watch.snapshot(entry.live));
