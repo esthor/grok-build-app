@@ -303,7 +303,21 @@ class SessionWatch {
   foldHunk(line: string): void {
     const rec = parseHunkLine(line);
     if (rec === null || rec.authorType !== "agent") return;
+    // Records repeat per hunkId as an edit evolves: retract the previous
+    // contribution before applying the new one, so the running aggregates
+    // stay equal to a full re-sum of hunkTotals.
+    const prev = this.hunkTotals.get(rec.hunkId);
+    if (prev !== undefined) {
+      this.hunkAdded -= prev.add;
+      this.hunkRemoved -= prev.rem;
+      const n = (this.hunkFiles.get(prev.file) ?? 1) - 1;
+      if (n <= 0) this.hunkFiles.delete(prev.file);
+      else this.hunkFiles.set(prev.file, n);
+    }
     this.hunkTotals.set(rec.hunkId, { add: rec.linesAdded, rem: rec.linesRemoved, file: rec.filePath });
+    this.hunkAdded += rec.linesAdded;
+    this.hunkRemoved += rec.linesRemoved;
+    this.hunkFiles.set(rec.filePath, (this.hunkFiles.get(rec.filePath) ?? 0) + 1);
   }
 
   snapshot(live: boolean): AgentSnapshot {
