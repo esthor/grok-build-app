@@ -110,11 +110,15 @@ class SessionWatch {
   itlP50 = 0;
   itlP99 = 0;
 
-  /** Recent feed items for this session, kept so focus switches can backfill. */
-  readonly ring: FeedItem[] = [];
-  /** Timestamp of the newest ring item already streamed to the deck, so a
-   * refocus backfills only what the user hasn't seen. */
-  lastStreamedAt = 0;
+  /** Recent feed items for this session, kept so focus switches can
+   * backfill. Each carries a monotonic sequence number: FeedItem.at can
+   * repeat (the envelope fallback is second-resolution), so timestamps
+   * can't identify "already streamed". */
+  readonly ring: RingEntry[] = [];
+  /** Next sequence number to assign to a ring entry. */
+  ringSeq = 0;
+  /** Highest sequence already streamed to the deck. */
+  lastStreamedSeq = 0;
 
   readonly dir: string;
   readonly id: string;
@@ -394,9 +398,16 @@ function clip(text: string, max: number): string {
 
 const RING_CAP = 60;
 
-function pushRing(ring: FeedItem[], items: FeedItem[]): void {
-  ring.push(...items);
-  if (ring.length > RING_CAP) ring.splice(0, ring.length - RING_CAP);
+/** A ring item plus its per-session sequence number. */
+type RingEntry = { seq: number; item: FeedItem };
+
+/** Append items to a watch's ring, stamping each with the next sequence. */
+function pushRing(w: SessionWatch, items: FeedItem[]): void {
+  for (const item of items) {
+    w.ringSeq += 1;
+    w.ring.push({ seq: w.ringSeq, item });
+  }
+  if (w.ring.length > RING_CAP) w.ring.splice(0, w.ring.length - RING_CAP);
 }
 
 // ── Discovery ────────────────────────────────────────────────────────────
@@ -514,9 +525,10 @@ export function startGrok(emit: Emit): GrokHandle {
     const w = entry.watch;
     // Backfill only items newer than what this session already streamed:
     // refocusing must not re-inject old history as if it just happened.
-    const backfill = w.ring.filter((item) => item.at > w.lastStreamedAt).slice(-30);
-    const newest = backfill[backfill.length - 1];
-    if (newest !== undefined) w.lastStreamedAt = Math.max(w.lastStreamedAt, newest.at);
+    const unseen = w.ring.filter((e) => e.seq > w.lastStreamedSeq).slice(-30);
+    const backfill = unseen.map((e) => e.item);
+    const newest = unseen[unseen.length - 1];
+    if (newest !== undefined) w.lastStreamedSeq = Math.max(w.lastStreamedSeq, newest.seq);
     emit.feed([
       {
         at: Date.now(),
@@ -559,7 +571,7 @@ export function startGrok(emit: Emit): GrokHandle {
     await fresh.updates.poll((line) => fresh.foldUpdate(line, backfill));
     await fresh.hunks.poll((line) => fresh.foldHunk(line));
     backfill.sort((a, b) => a.at - b.at);
-    pushRing(fresh.ring, backfill);
+    pushRing(fresh, backfill);
     watches.set(id, { watch: fresh, live });
   };
 
@@ -663,17 +675,18 @@ export function startGrok(emit: Emit): GrokHandle {
             // Carry the stream cursor across the replacement: the rebuilt
             // watch replays history into its ring, and without the cursor
             // a focused rebuild would re-emit items the deck already has.
-            rebuilt.watch.lastStreamedAt = w.lastStreamedAt;
+            // The rebuilt watch re-stamps its replayed ring from seq 1, so
+            // carry the count already streamed, not the old seq value.
+            rebuilt.watch.lastStreamedSeq = rebuilt.watch.ringSeq;
             if (w.id === focusedId) emitFocus(rebuilt);
           }
           continue;
         }
         if (fresh.length === 0) continue;
         fresh.sort((a, b) => a.at - b.at);
-        pushRing(w.ring, fresh);
+        pushRing(w, fresh);
         if (w.id === focusedId) {
-          const newest = fresh[fresh.length - 1];
-          if (newest !== undefined) w.lastStreamedAt = Math.max(w.lastStreamedAt, newest.at);
+          w.lastStreamedSeq = w.ringSeq;
           emit.feed(fresh);
         }
       }
