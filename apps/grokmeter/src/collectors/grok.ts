@@ -42,9 +42,10 @@ const home = (): string => grokHome(process.env, homedir(), join);
 
 /** Bun-backed IO for the shared Tail (byte-oriented per the contract). */
 const BUN_IO: TailIo = {
-  size: async (path) => {
+  stat: async (path) => {
     try {
-      return (await stat(path)).size;
+      const st = await stat(path);
+      return { size: st.size, id: `${st.dev}:${st.ino}` };
     } catch {
       return null;
     }
