@@ -20,6 +20,9 @@ export type StoreEvents = {
   hello: ServerInfo;
   link: boolean;
   fleet: FleetEntry[];
+  /** Fired when replayable feed state is dropped (reconnect); every feed
+   * consumer must clear what it derived from the ring. */
+  feedReset: void;
 };
 
 type Handler<T> = (value: T) => void;
@@ -45,6 +48,7 @@ export class Store {
     hello: new Set(),
     link: new Set(),
     fleet: new Set(),
+    feedReset: new Set(),
   };
 
   on<K extends keyof StoreEvents>(key: K, fn: Handler<StoreEvents[K]>): void {
@@ -61,11 +65,10 @@ export class Store {
   }
 
   /** Drop replayable state before a reconnect replays the server's ring
-   * buffer, so the feed doesn't duplicate. Emits an empty feed batch as the
-   * reset signal (widgets clear when the store's feed is empty). */
+   * buffer, so feed-derived widgets don't duplicate rows. */
   resetFeed(): void {
     this.feed.length = 0;
-    this.emit("feed", []);
+    this.emit("feedReset", undefined);
   }
 
   ingest(msg: Wire): void {

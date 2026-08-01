@@ -50,6 +50,11 @@ export const diffTapeWidget: WidgetDef = {
       setStatus(agent.linesAdded + agent.linesRemoved > 0 ? "ok" : "");
     });
 
+    store.on("feedReset", () => {
+      // The ring is about to replay; drop rows derived from it.
+      tape.innerHTML = "";
+    });
+
     store.on("feed", (items) => {
       for (const item of items) {
         if (item.kind !== "edit") continue;
