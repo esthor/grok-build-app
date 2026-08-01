@@ -9,9 +9,12 @@ import {
 import {
   addTask,
   currentTask,
+  isConsumed,
   nextTaskId,
   queueStore,
   setCurrent,
+  setTaskStatus,
+  statusOf,
 } from "../state/queue";
 import { applyPreset, settingsStore, TUNER_PRESETS } from "../state/settings";
 import { SimTransport } from "./engine";
@@ -222,6 +225,13 @@ function onEvent(event: AgentEvent): void {
       patchSession({ usage: event.usage });
       break;
     case "session_finished": {
+      const finishedId = queueStore.state.currentId;
+      if (finishedId !== null && statusOf(queueStore.state, finishedId) === "running") {
+        setTaskStatus(
+          finishedId,
+          event.result === "success" ? "done" : event.result === "aborted" ? "stopped" : "failed",
+        );
+      }
       pushLog(
         "sys",
         `■ ${event.result === "success" ? "finished" : event.result}: ${event.summary}`,
@@ -254,6 +264,22 @@ export function play(): void {
     pushLog("sys", "queue is empty — hit ADD in the queue window", "warn");
     return;
   }
+  if (isConsumed(queueStore.state, task.id)) {
+    // a started session can never be restarted; roll forward instead
+    const next = nextTaskId(queueStore.state, 1);
+    if (next === null) {
+      pushLog("sys", "every queued task has already run — ADD a new one", "warn");
+      return;
+    }
+    jumpTo(next, true);
+    return;
+  }
+  startTask(task);
+}
+
+/** the single place a task transitions queued → running */
+function startTask(task: TaskSpec): void {
+  setTaskStatus(task.id, "running");
   transport.load(task);
   patchSession({ task });
   transport.play();
@@ -274,6 +300,10 @@ export function pauseToggle(): void {
 }
 
 export function stop(): void {
+  const current = queueStore.state.currentId;
+  if (current !== null && statusOf(queueStore.state, current) === "running") {
+    setTaskStatus(current, "stopped"); // consumed: aborting doesn't rewind it
+  }
   transport.stop();
   patchSession({ elapsedMs: 0, progress: 0, tokPerSec: 0, pendingPerms: [] });
 }
@@ -293,12 +323,24 @@ export function jumpTo(id: string, autoplay: boolean): void {
   if (task === undefined) {
     return;
   }
+  if (isConsumed(queueStore.state, id)) {
+    const status = statusOf(queueStore.state, id);
+    pushLog(
+      "sys",
+      status === "running"
+        ? "that session is already running"
+        : `already ran (${status}) — sessions don't restart; ADD a new task`,
+      "warn",
+    );
+    return;
+  }
   setCurrent(id);
   transport.stop();
-  transport.load(task);
   patchSession({ task, elapsedMs: 0, progress: 0 });
   if (autoplay) {
-    transport.play();
+    startTask(task);
+  } else {
+    transport.load(task);
   }
 }
 
@@ -308,18 +350,46 @@ export function respondPermission(requestId: string, decision: PermissionDecisio
 
 let addCounter = 0;
 
-export function addRandomTask(): void {
+export interface TaskDraft {
+  readonly repo: string;
+  readonly prompt: string;
+  readonly effort: string;
+}
+
+/** queue a task the operator actually composed */
+export function queueTask(draft: TaskDraft): TaskSpec {
   addCounter += 1;
-  const template = pick(Math.random, TOOL_TEMPLATES);
+  const prompt = draft.prompt.trim();
+  const firstLine = prompt.split("\n")[0] ?? prompt;
+  const commands = [...prompt.matchAll(/(?:^|\n)\/([\w:-]+)/g)].map((m) => `/${m[1] ?? ""}`);
   const task: TaskSpec = {
     id: `t-user-${addCounter}-${Date.now().toString(36)}`,
-    title: `Operator request: ${template.label}`,
-    repo: "grok-build",
-    estOutputTokens: 4_000 + Math.floor(Math.random() * 18_000),
-    plan: ["Understand the ask", "Do the thing", "Prove it works"],
+    title: firstLine.length > 90 ? `${firstLine.slice(0, 87)}…` : firstLine,
+    repo: draft.repo,
+    estOutputTokens: 3_000 + Math.min(40_000, prompt.length * 40),
+    plan:
+      commands.length > 0
+        ? [`Run ${commands.join(" ")}`, "Carry out the request", "Report back"]
+        : ["Understand the ask", "Do the thing", "Prove it works"],
   };
   addTask(task);
-  pushLog("sys", `+ queued: ${task.title}`);
+  pushLog(
+    "sys",
+    `+ queued [${draft.repo}] ${task.title}${
+      draft.effort !== "medium" ? ` (effort: ${draft.effort})` : ""
+    }`,
+  );
+  return task;
+}
+
+/** the eject button / L key: a quick throwaway task, no dialog */
+export function addRandomTask(): void {
+  const template = pick(Math.random, TOOL_TEMPLATES);
+  queueTask({
+    repo: "grok-build-app",
+    prompt: `Operator request: ${template.label}`,
+    effort: "medium",
+  });
 }
 
 export function whipTheLlama(): void {

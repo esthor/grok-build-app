@@ -48,7 +48,7 @@ bun run tauri dev
 |---|---|---|
 | **GROKAMP** (main) | main window | transport, 7-seg session clock (click = est. remaining), marquee with live tool call, TOK/S + %CTX + cost readouts, MCP/SUB/PERM LEDs, mini visualizer, THR + RISK sliders, clutterbar O-A-I-D-V |
 | **HARNESS TUNER** | equalizer | EFFORT preamp + 10 bands (TMP PLN CTX PAR TST WEB MEM VRB SFT FUN), ON/AUTO, presets: Pair Prog, Deep Research, YOLO Friday, Prod Incident… |
-| **TASK QUEUE** | playlist editor | virtualized queue, ADD/REM/SEL/MISC, shuffle/repeat, double-click to run, ~token "durations" |
+| **TASK QUEUE** | playlist editor | virtualized queue, shuffle/repeat, double-click to run. **ADD** opens a composer (repo picker, effort, prompt) with grok-build's real `/slash` commands autocompleting as you type. A started session is **consumed** — it can never be restarted, mirroring the harness |
 | **TERMINAL** | — (the 2025 part) | streaming thinking/text/tool log, inline blocking **ALLOW/DENY** permission cards |
 | **VISUALIZER** | vis window | spectrum (19 bars + falling peak caps) / oscilloscope / plasma, fed by token flow — tool calls kick the bass |
 | **TODO LIST** | — | the agent's live plan; in-progress blinks |
@@ -57,11 +57,17 @@ bun run tauri dev
 | **SKIN MUSEUM** | skins.webamp.org | search 100k+ archived classic skins, WEAR streams them on demand (never bundled) |
 | **HEAD UNIT** | the main window itself | a real 275×116 classic-skin window blitted from a user-supplied `.wsz` — pixel-perfect sprites, bitmap-font ticker, working transport (Alt+9) |
 
-Windows drag, **snap at the classic 10px** (20 at our 2× pixel grid),
-double-click titlebars to **windowshade**, and the resizable ones quantize to
-Winamp's 25×29 segments. Layout, skin, and double-size state persist — and
-live in the URL (`?skin=Vaporwave%20Sunset&wins=main,queue&x2=1`), so a
-workspace is a link.
+**Windows can never overlap.** The workspace is a binary space-partition
+tree, so overlap is unrepresentable rather than merely discouraged: drag a
+titlebar onto another pane and a ghost shows exactly where it will land —
+outer 30% of a side **splits**, the middle **swaps**, the workspace edge
+**docks** to that whole side. Drag the gutters to re-apportion; double-click
+a titlebar to **windowshade**; `Alt+Shift+arrows` moves the focused pane.
+The rationale and the prior art (i3, bspwm, Snap Layouts, FancyZones, VS
+Code, react-mosaic) are written up in [docs/WINDOWING.md](docs/WINDOWING.md).
+Layout, skin, and double-size state persist — and the open set lives in the
+URL (`?skin=Vaporwave%20Sunset&wins=main,queue&x2=1`), so a workspace is a
+link.
 
 ## Keys
 

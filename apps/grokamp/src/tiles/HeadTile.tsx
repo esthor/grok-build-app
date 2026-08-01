@@ -14,14 +14,15 @@ import { sessionStore } from "../state/session";
 import { currentSkin, settingsStore } from "../state/settings";
 import {
   focusWindow,
-  moveWindow,
+  openWindowIds,
   setWindowOpen,
   toggleWindow,
   windowsStore,
 } from "../state/windows";
 import { wszStore } from "../skins/wsz";
-import { clampToViewport, snapPosition, type Rect } from "../wm/snap";
+import { beginDrag, dragStore, updateDrag } from "../wm/drag";
 import { cycleVisMode } from "../vis/VisCanvas";
+import type { TileProps } from "./registry";
 
 /**
  * The HEAD UNIT: a real 275x116 classic-skin main window rendered at 2x
@@ -108,23 +109,16 @@ function inRect(x: number, y: number, r: HitRect): boolean {
   return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
 }
 
-export function HeadTile(): ReactNode {
-  const win = useStore(windowsStore, (s) => s.wins.head);
-  const zIndex = useStore(windowsStore, (s) => 10 + s.order.indexOf("head"));
-  const focused = useStore(windowsStore, (s) => s.order[s.order.length - 1] === "head");
+export function HeadTile({ rect, frame }: TileProps): ReactNode {
+  const focused = useStore(windowsStore, (s) => s.focus === "head");
+  const shaded = useStore(windowsStore, (s) => s.shaded["head"] === true);
   const wsz = useStore(wszStore);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const pressedRef = useRef<string | null>(null);
-  const dragRef = useRef<{ startX: number; startY: number; winX: number; winY: number } | null>(
-    null,
-  );
   const focusedRef = useRef(focused);
   focusedRef.current = focused;
 
   useEffect(() => {
-    if (!win.open) {
-      return;
-    }
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d") ?? null;
     if (canvas === null || ctx === null) {
@@ -322,20 +316,16 @@ export function HeadTile(): ReactNode {
         ctx.drawImage(sheets.shufrep, 28, shufY, 47, 15, 164, 89, 47, 15);
         const repY = (queue.repeat ? 30 : 0) + (pressedRef.current === "repeat" ? 15 : 0);
         ctx.drawImage(sheets.shufrep, 0, repY, 28, 15, 210, 89, 28, 15);
-        const wins = windowsStore.state.wins;
-        ctx.drawImage(sheets.shufrep, 0, wins.tuner.open ? 73 : 61, 23, 12, 219, 58, 23, 12);
-        ctx.drawImage(sheets.shufrep, 23, wins.queue.open ? 73 : 61, 23, 12, 242, 58, 23, 12);
+        const open = new Set(openWindowIds(windowsStore.state));
+        ctx.drawImage(sheets.shufrep, 0, open.has("tuner") ? 73 : 61, 23, 12, 219, 58, 23, 12);
+        ctx.drawImage(sheets.shufrep, 23, open.has("queue") ? 73 : 61, 23, 12, 242, 58, 23, 12);
       }
     };
     raf = requestAnimationFrame(frame);
     return () => {
       cancelAnimationFrame(raf);
     };
-  }, [win.open, wsz]);
-
-  if (!win.open) {
-    return null;
-  }
+  }, [wsz]);
 
   const toLocal = (e: ReactPointerEvent<HTMLCanvasElement>): readonly [number, number] => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -354,37 +344,25 @@ export function HeadTile(): ReactNode {
       pressedRef.current = hit.id;
       return;
     }
+    // the skin's own titlebar is the drag handle; the tiler decides where it lands
     if (y < 14) {
-      dragRef.current = { startX: e.clientX, startY: e.clientY, winX: win.x, winY: win.y };
+      beginDrag("head");
     }
   };
 
   const onPointerMove = (e: ReactPointerEvent<HTMLCanvasElement>): void => {
-    const drag = dragRef.current;
-    if (drag === null) {
+    if (dragStore.state.id !== "head") {
       return;
     }
-    const desktop = document.getElementById("desktop");
-    const viewport =
-      desktop !== null
-        ? { w: desktop.clientWidth, h: desktop.clientHeight }
-        : { w: window.innerWidth, h: window.innerHeight };
-    const others: Rect[] = Object.entries(windowsStore.state.wins)
-      .filter(([id, w]) => id !== "head" && w.open)
-      .map(([, w]) => ({ x: w.x, y: w.y, w: w.w, h: w.h }));
-    const proposed: Rect = {
-      x: drag.winX + (e.clientX - drag.startX),
-      y: drag.winY + (e.clientY - drag.startY),
-      w: W * SCALE,
-      h: H * SCALE,
-    };
-    const snapped = snapPosition(proposed, others, viewport);
-    const clamped = clampToViewport({ ...proposed, ...snapped }, viewport);
-    moveWindow("head", clamped.x, clamped.y);
+    const host = document.getElementById("desktop");
+    if (host === null) {
+      return;
+    }
+    const box = host.getBoundingClientRect();
+    updateDrag(e.clientX - box.left, e.clientY - box.top, frame);
   };
 
   const onPointerUp = (e: ReactPointerEvent<HTMLCanvasElement>): void => {
-    dragRef.current = null;
     const pressed = pressedRef.current;
     pressedRef.current = null;
     if (pressed === null) {
@@ -403,8 +381,12 @@ export function HeadTile(): ReactNode {
       className="head-win"
       data-focused={focused ? "yes" : "no"}
       width={W * SCALE}
-      height={H * SCALE}
-      style={{ left: win.x, top: win.y, zIndex }}
+      height={shaded ? 28 : H * SCALE}
+      style={{
+        // centered in the cell the tiler gave us, never scaled
+        left: rect.x + Math.max(0, Math.round((rect.w - W * SCALE) / 2)),
+        top: rect.y + Math.max(0, Math.round((rect.h - (shaded ? 28 : H * SCALE)) / 2)),
+      }}
       title={wsz === null ? "head unit — wear a .wsz from the skin lab" : `head unit — ${wsz.name}`}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

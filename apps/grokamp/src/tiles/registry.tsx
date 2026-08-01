@@ -1,10 +1,10 @@
 import type { ComponentType } from "react";
 import type { WinId } from "../state/windows";
-import type { ResizeSpec } from "../wm/Window";
+import type { Rect } from "../wm/tile";
 import { HeadTile } from "./HeadTile";
 import { MainTile } from "./MainTile";
-import { MuseumTile } from "./MuseumTile";
 import { McpTile } from "./McpTile";
+import { MuseumTile } from "./MuseumTile";
 import { QueueTile } from "./QueueTile";
 import { SkinLabTile } from "./SkinLabTile";
 import { TerminalTile } from "./TerminalTile";
@@ -12,57 +12,32 @@ import { TodosTile } from "./TodosTile";
 import { TunerTile } from "./TunerTile";
 import { VisTile } from "./VisTile";
 
+/**
+ * Every tile is handed the rect the tiler assigned it, plus the workspace
+ * frame. Most ignore both; canvas tiles size themselves from `rect`, and the
+ * frameless head unit positions its own chrome inside it.
+ */
+export interface TileProps {
+  readonly rect: Rect;
+  readonly frame: Rect;
+}
+
 export interface WindowDef {
   readonly title: string;
-  readonly component: ComponentType;
-  readonly resize?: ResizeSpec;
+  readonly component: ComponentType<TileProps>;
   /** renders its own chrome (the .wsz head unit); skip the Win wrapper */
   readonly frameless?: true;
 }
 
-/**
- * Winamp's playlist resized in 25x29px segments; at our 2x pixel scale
- * that's 50x58.
- */
-const STEP = { w: 50, h: 58 } as const;
-
 export const WINDOW_DEFS: Readonly<Record<WinId, WindowDef>> = {
   main: { title: "GROKAMP", component: MainTile },
   tuner: { title: "HARNESS TUNER", component: TunerTile },
-  queue: {
-    title: "TASK QUEUE",
-    component: QueueTile,
-    resize: { min: { w: 450, h: 202 }, step: STEP },
-  },
-  terminal: {
-    title: "TERMINAL",
-    component: TerminalTile,
-    resize: { min: { w: 470, h: 260 }, step: STEP },
-  },
-  vis: {
-    title: "VISUALIZER",
-    component: VisTile,
-    resize: { min: { w: 420, h: 202 }, step: STEP },
-  },
-  todos: {
-    title: "TODO LIST",
-    component: TodosTile,
-    resize: { min: { w: 320, h: 186 }, step: STEP },
-  },
-  mcp: {
-    title: "MCP SERVERS",
-    component: McpTile,
-    resize: { min: { w: 320, h: 160 }, step: STEP },
-  },
-  skinlab: {
-    title: "SKIN LAB",
-    component: SkinLabTile,
-    resize: { min: { w: 370, h: 260 }, step: STEP },
-  },
+  queue: { title: "TASK QUEUE", component: QueueTile },
+  terminal: { title: "TERMINAL", component: TerminalTile },
+  vis: { title: "VISUALIZER", component: VisTile },
+  todos: { title: "TODO LIST", component: TodosTile },
+  mcp: { title: "MCP SERVERS", component: McpTile },
+  skinlab: { title: "SKIN LAB", component: SkinLabTile },
   head: { title: "HEAD UNIT", component: HeadTile, frameless: true },
-  museum: {
-    title: "SKIN MUSEUM",
-    component: MuseumTile,
-    resize: { min: { w: 420, h: 318 }, step: STEP },
-  },
+  museum: { title: "SKIN MUSEUM", component: MuseumTile },
 };

@@ -1,9 +1,9 @@
 import { useStore } from "@tanstack/react-store";
 import type { ReactNode } from "react";
 import { settingsStore, updateSettings, type VisMode } from "../state/settings";
-import { windowsStore } from "../state/windows";
 import { LcdText, SquareBtn } from "../ui/controls";
 import { VisCanvas } from "../vis/VisCanvas";
+import type { TileProps } from "./registry";
 
 const MODES: readonly { id: VisMode; label: string }[] = [
   { id: "spectrum", label: "SPEC" },
@@ -12,12 +12,12 @@ const MODES: readonly { id: VisMode; label: string }[] = [
   { id: "off", label: "OFF" },
 ];
 
-export function VisTile(): ReactNode {
+export function VisTile({ rect }: TileProps): ReactNode {
   const mode = useStore(settingsStore, (s) => s.visMode);
-  const win = useStore(windowsStore, (s) => s.wins.vis);
 
-  const canvasW = Math.max(160, win.w - 20);
-  const canvasH = Math.max(80, win.h - 28 - 52);
+  // the tiler owns the geometry; the canvas just fills what it was given
+  const canvasW = Math.max(160, rect.w - 20);
+  const canvasH = Math.max(80, rect.h - 28 - 52);
 
   return (
     <div className="vis-tile">

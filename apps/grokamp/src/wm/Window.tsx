@@ -1,122 +1,47 @@
 import { useStore } from "@tanstack/react-store";
-import { useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import {
   focusWindow,
-  getWin,
-  moveWindow,
-  resizeWindow,
   setWindowOpen,
   toggleShade,
   windowsStore,
   type WinId,
 } from "../state/windows";
-import { clampToViewport, quantizeSize, snapPosition, type Rect, type Size } from "./snap";
-
-export const SHADE_H = 28;
-
-export interface ResizeSpec {
-  readonly min: Size;
-  readonly step: Size;
-}
+import { beginDrag, dragStore, updateDrag } from "./drag";
+import type { Rect } from "./tile";
 
 interface WindowProps {
   readonly id: WinId;
   readonly title: string;
-  readonly resize?: ResizeSpec;
+  /** computed by the tiler — windows never position themselves */
+  readonly rect: Rect;
+  readonly frame: Rect;
   readonly children: ReactNode;
 }
 
-function desktopSize(): Size {
-  const el = document.getElementById("desktop");
-  if (el === null) {
-    return { w: window.innerWidth, h: window.innerHeight };
-  }
-  return { w: el.clientWidth, h: el.clientHeight };
-}
-
-function siblingRects(exclude: WinId): Rect[] {
-  const state = windowsStore.state;
-  const rects: Rect[] = [];
-  for (const [key, win] of Object.entries(state.wins)) {
-    if (key === exclude || !win.open) {
-      continue;
-    }
-    rects.push({ x: win.x, y: win.y, w: win.w, h: win.shaded ? SHADE_H : win.h });
-  }
-  return rects;
-}
-
-export function Win({ id, title, resize, children }: WindowProps): ReactNode {
-  const win = useStore(windowsStore, (s) => getWin(s, id));
-  const zIndex = useStore(windowsStore, (s) => 10 + s.order.indexOf(id));
-  const focused = useStore(
-    windowsStore,
-    (s) => s.order[s.order.length - 1] === id,
-  );
-  const dragRef = useRef<{ startX: number; startY: number; winX: number; winY: number } | null>(
-    null,
-  );
-  const sizeRef = useRef<{ startX: number; startY: number; w: number; h: number } | null>(null);
-
-  if (!win.open) {
-    return null;
-  }
+export function Win({ id, title, rect, frame, children }: WindowProps): ReactNode {
+  const shaded = useStore(windowsStore, (s) => s.shaded[id] === true);
+  const focused = useStore(windowsStore, (s) => s.focus === id);
+  const dragging = useStore(dragStore, (s) => s.id === id);
 
   const onTitlePointerDown = (e: ReactPointerEvent<HTMLDivElement>): void => {
     if (e.button !== 0) {
       return;
     }
-    dragRef.current = { startX: e.clientX, startY: e.clientY, winX: win.x, winY: win.y };
     e.currentTarget.setPointerCapture(e.pointerId);
+    beginDrag(id);
   };
 
   const onTitlePointerMove = (e: ReactPointerEvent<HTMLDivElement>): void => {
-    const drag = dragRef.current;
-    if (drag === null) {
+    if (dragStore.state.id !== id) {
       return;
     }
-    const state = windowsStore.state.wins[id];
-    const h = state.shaded ? SHADE_H : state.h;
-    const proposed: Rect = {
-      x: drag.winX + (e.clientX - drag.startX),
-      y: drag.winY + (e.clientY - drag.startY),
-      w: state.w,
-      h,
-    };
-    const snapped = snapPosition(proposed, siblingRects(id), desktopSize());
-    const clamped = clampToViewport({ ...proposed, ...snapped }, desktopSize());
-    moveWindow(id, clamped.x, clamped.y);
-  };
-
-  const onTitlePointerUp = (): void => {
-    dragRef.current = null;
-  };
-
-  const onGripPointerDown = (e: ReactPointerEvent<HTMLDivElement>): void => {
-    if (e.button !== 0 || resize === undefined) {
+    const host = document.getElementById("desktop");
+    if (host === null) {
       return;
     }
-    e.stopPropagation();
-    sizeRef.current = { startX: e.clientX, startY: e.clientY, w: win.w, h: win.h };
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-
-  const onGripPointerMove = (e: ReactPointerEvent<HTMLDivElement>): void => {
-    const start = sizeRef.current;
-    if (start === null || resize === undefined) {
-      return;
-    }
-    const next = quantizeSize(
-      start.w + (e.clientX - start.startX),
-      start.h + (e.clientY - start.startY),
-      resize.min,
-      resize.step,
-    );
-    resizeWindow(id, next.w, next.h);
-  };
-
-  const onGripPointerUp = (): void => {
-    sizeRef.current = null;
+    const box = host.getBoundingClientRect();
+    updateDrag(e.clientX - box.left, e.clientY - box.top, frame);
   };
 
   return (
@@ -124,14 +49,9 @@ export function Win({ id, title, resize, children }: WindowProps): ReactNode {
       className="win"
       data-win={id}
       data-focused={focused ? "yes" : "no"}
-      data-shaded={win.shaded ? "yes" : "no"}
-      style={{
-        left: win.x,
-        top: win.y,
-        width: win.w,
-        height: win.shaded ? SHADE_H : win.h,
-        zIndex,
-      }}
+      data-shaded={shaded ? "yes" : "no"}
+      data-dragging={dragging ? "yes" : "no"}
+      style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
       onPointerDownCapture={() => {
         focusWindow(id);
       }}
@@ -140,10 +60,10 @@ export function Win({ id, title, resize, children }: WindowProps): ReactNode {
         className="win-title"
         onPointerDown={onTitlePointerDown}
         onPointerMove={onTitlePointerMove}
-        onPointerUp={onTitlePointerUp}
         onDoubleClick={() => {
           toggleShade(id);
         }}
+        title="drag onto another window to split or swap · double-click to roll up"
       >
         <span className="win-title-notch" aria-hidden="true" />
         <span className="win-title-text">{title}</span>
@@ -152,7 +72,7 @@ export function Win({ id, title, resize, children }: WindowProps): ReactNode {
           <button
             type="button"
             className="win-btn"
-            title={win.shaded ? "unroll" : "windowshade"}
+            title={shaded ? "unroll" : "windowshade"}
             onPointerDown={(e) => {
               e.stopPropagation();
             }}
@@ -160,7 +80,7 @@ export function Win({ id, title, resize, children }: WindowProps): ReactNode {
               toggleShade(id);
             }}
           >
-            {win.shaded ? "▾" : "▴"}
+            {shaded ? "▾" : "▴"}
           </button>
           <button
             type="button"
@@ -177,16 +97,7 @@ export function Win({ id, title, resize, children }: WindowProps): ReactNode {
           </button>
         </span>
       </div>
-      {!win.shaded && <div className="win-body">{children}</div>}
-      {!win.shaded && resize !== undefined && (
-        <div
-          className="win-grip"
-          title="resize"
-          onPointerDown={onGripPointerDown}
-          onPointerMove={onGripPointerMove}
-          onPointerUp={onGripPointerUp}
-        />
-      )}
+      {!shaded && <div className="win-body">{children}</div>}
     </section>
   );
 }

@@ -15,7 +15,7 @@ import {
   settingsStore,
   updateSettings,
 } from "../state/settings";
-import { toggleWindow, windowsStore, type WinId } from "../state/windows";
+import { openWindowIds, toggleWindow, windowsStore, type WinId } from "../state/windows";
 import { Marquee } from "../ui/Marquee";
 import { SevenSeg } from "../ui/SevenSeg";
 import { Led, LcdText, Slider, SquareBtn } from "../ui/controls";
@@ -42,7 +42,7 @@ export function MainTile(): ReactNode {
   const session = useStore(sessionStore);
   const settings = useStore(settingsStore);
   const queue = useStore(queueStore);
-  const openWins = useStore(windowsStore, (s) => s.wins);
+  const openWins = useStore(windowsStore, (s) => openWindowIds(s).join(","));
   const [showRemain, setShowRemain] = useState(false);
 
   const llama = Date.now() < session.llamaUntil;
@@ -219,7 +219,7 @@ export function MainTile(): ReactNode {
             <SquareBtn
               key={w.id}
               title={w.title}
-              lit={openWins[w.id].open}
+              lit={openWins.split(",").includes(w.id)}
               onClick={() => {
                 toggleWindow(w.id);
               }}

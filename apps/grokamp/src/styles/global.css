@@ -62,6 +62,11 @@ canvas {
 
 /* ------------------------------------------------ desktop */
 
+.app-root {
+  width: 100%;
+  height: 100%;
+}
+
 #desktop {
   position: relative;
   width: 100%;
@@ -1065,6 +1070,208 @@ html[data-scanlines="on"] .lcd::after {
   margin-top: auto;
 }
 
+/* --------------------------------------- tiling: dividers + drop ghost */
+
+.divider {
+  position: absolute;
+  z-index: 40;
+  background: color-mix(in srgb, var(--sk-edgeDark) 70%, transparent);
+  touch-action: none;
+}
+
+.divider::after {
+  content: "";
+  position: absolute;
+  /* a fat invisible grab area around a thin visible gutter */
+  inset: -3px;
+}
+
+.divider-row {
+  cursor: col-resize;
+}
+
+.divider-col {
+  cursor: row-resize;
+}
+
+.divider:hover {
+  background: var(--sk-lcdAccent);
+}
+
+#desktop[data-dragging="yes"] {
+  cursor: grabbing;
+}
+
+#desktop[data-dragging="yes"] .win-body {
+  pointer-events: none;
+}
+
+.win[data-dragging="yes"] {
+  opacity: 0.55;
+  filter: saturate(0.6);
+}
+
+.drop-ghost {
+  position: absolute;
+  z-index: 900;
+  pointer-events: none;
+  border: 2px solid var(--sk-lcdAccent);
+  background: color-mix(in srgb, var(--sk-lcdAccent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sk-lcdBg) 60%, transparent);
+  display: grid;
+  place-items: center;
+}
+
+.drop-ghost-label {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  padding: 3px 8px;
+  color: var(--sk-lcdBg);
+  background: var(--sk-lcdAccent);
+  -webkit-font-smoothing: none;
+}
+
+.workspace-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sk-titleTextDim);
+  pointer-events: none;
+}
+
+/* --------------------------------------- task composer */
+
+.composer {
+  width: min(720px, 88vw);
+  background: var(--sk-chrome);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.composer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.composer-area {
+  position: relative;
+  padding: 0;
+}
+
+.composer-input {
+  width: 100%;
+  min-height: 140px;
+  resize: vertical;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 8px 10px;
+  color: var(--sk-lcdText);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.composer-input::placeholder {
+  color: var(--sk-lcdDim);
+}
+
+.composer-complete {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 6px;
+  max-height: 190px;
+  overflow-y: auto;
+  list-style: none;
+  background: var(--sk-chromeDeep);
+  border: 1px solid;
+  border-color: var(--sk-edgeLight) var(--sk-edgeDark) var(--sk-edgeDark) var(--sk-edgeLight);
+  z-index: 3;
+}
+
+.composer-complete li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.composer-complete li[data-active="yes"] {
+  background: var(--sk-listSelBg);
+}
+
+.composer-cmd {
+  color: var(--sk-lcdAccent);
+  font-weight: 700;
+}
+
+.composer-arg {
+  color: var(--sk-lcdDim);
+}
+
+.composer-hint {
+  color: var(--sk-btnText);
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-group {
+  margin-left: auto;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--sk-titleTextDim);
+}
+
+.composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.composer-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* --------------------------------------- queue status */
+
+.queue-row[data-status="running"] .queue-row-title {
+  color: var(--sk-lcdAccent);
+}
+
+.queue-row[data-status="done"],
+.queue-row[data-status="stopped"],
+.queue-row[data-status="failed"] {
+  opacity: 0.5;
+}
+
+.queue-row[data-status="done"] .queue-row-title,
+.queue-row[data-status="stopped"] .queue-row-title {
+  text-decoration: line-through;
+}
+
+.queue-row[data-status="failed"] .queue-row-title {
+  color: var(--sk-err);
+  text-decoration: line-through;
+}
+
 /* ------------------------------------------------ museum */
 
 .museum-tile {
@@ -1107,12 +1314,25 @@ html[data-scanlines="on"] .lcd::after {
   color: var(--sk-listCurrent);
 }
 
+.museum-rank {
+  color: var(--sk-lcdDim);
+  min-width: 34px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .museum-name {
   color: var(--sk-listText);
   text-decoration: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+}
+
+.museum-sentinel {
+  padding: 10px;
+  text-align: center;
 }
 
 .museum-name:hover {

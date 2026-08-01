@@ -10,9 +10,8 @@ import {
 } from "./agent/controller";
 import { toggleRepeat, toggleShuffle } from "./state/queue";
 import { settingsStore, updateSettings } from "./state/settings";
-import { toggleWindow, WIN_IDS } from "./state/windows";
-import { WINDOW_DEFS } from "./tiles/registry";
-import { Win } from "./wm/Window";
+import { moveFocused, toggleWindow, WIN_IDS } from "./state/windows";
+import { Workspace } from "./wm/Workspace";
 
 function AboutOverlay({ onClose }: { readonly onClose: () => void }): ReactNode {
   return (
@@ -72,11 +71,41 @@ export function App(): ReactNode {
         updateSettings({ doubleSize: !settingsStore.state.doubleSize });
         return;
       }
+      if (e.altKey && e.shiftKey) {
+        // i3 muscle memory: move the focused window within the partition tree
+        const side =
+          e.key === "ArrowLeft"
+            ? "left"
+            : e.key === "ArrowRight"
+              ? "right"
+              : e.key === "ArrowUp"
+                ? "top"
+                : e.key === "ArrowDown"
+                  ? "bottom"
+                  : null;
+        if (side !== null) {
+          e.preventDefault();
+          const host = document.getElementById("desktop");
+          moveFocused(side, {
+            x: 0,
+            y: 0,
+            w: host?.clientWidth ?? window.innerWidth,
+            h: host?.clientHeight ?? window.innerHeight,
+          });
+          return;
+        }
+      }
       if (e.altKey && /^[1-9]$/.test(e.key)) {
         const id = WIN_IDS[Number.parseInt(e.key, 10) - 1];
         if (id !== undefined) {
           e.preventDefault();
-          toggleWindow(id);
+          const host = document.getElementById("desktop");
+          toggleWindow(id, {
+            x: 0,
+            y: 0,
+            w: host?.clientWidth ?? window.innerWidth,
+            h: host?.clientHeight ?? window.innerHeight,
+          });
         }
         return;
       }
@@ -135,27 +164,8 @@ export function App(): ReactNode {
   }, []);
 
   return (
-    <div id="desktop" style={doubleSize ? { zoom: 2 } : undefined}>
-      <div className="desktop-tag" aria-hidden="true">
-        GROKAMP · winamp-grade frontend for grok-build · F=llama? no. type llama.
-      </div>
-      {WIN_IDS.map((id) => {
-        const def = WINDOW_DEFS[id];
-        const Body = def.component;
-        if (def.frameless === true) {
-          return <Body key={id} />;
-        }
-        return (
-          <Win
-            key={id}
-            id={id}
-            title={def.title}
-            {...(def.resize !== undefined ? { resize: def.resize } : {})}
-          >
-            <Body />
-          </Win>
-        );
-      })}
+    <div className="app-root" style={doubleSize ? { zoom: 2 } : undefined}>
+      <Workspace />
       {aboutOpen && (
         <AboutOverlay
           onClose={() => {

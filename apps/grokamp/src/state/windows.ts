@@ -1,4 +1,22 @@
 import { Store } from "@tanstack/store";
+import {
+  attachToRoot,
+  insertAtLargest,
+  layout,
+  leaf,
+  leafIds,
+  moveLeaf,
+  neighborOf,
+  removeLeaf,
+  setRatioAt,
+  split,
+  swapLeaves,
+  type DropZone,
+  type Intrinsic,
+  type Layout,
+  type Rect,
+  type TileNode,
+} from "../wm/tile";
 import { debounced, loadPersisted, savePersisted } from "./persist";
 
 export type WinId =
@@ -26,146 +44,188 @@ export const WIN_IDS: readonly WinId[] = [
   "museum",
 ];
 
-export interface WinRect {
-  readonly x: number;
-  readonly y: number;
-  readonly w: number;
-  readonly h: number;
-}
-
-export interface WinState extends WinRect {
-  readonly open: boolean;
-  readonly shaded: boolean;
-}
+/** the head unit is a real 275x116 classic skin at 2x — never scaled */
+export const HEAD_SIZE = { w: 550, h: 232 } as const;
+export const SHADE_H = 28;
 
 export interface WindowsState {
-  /** back-to-front stacking order */
-  readonly order: readonly WinId[];
-  readonly wins: Readonly<Record<WinId, WinState>>;
+  /** the partition tree; null = empty workspace. Only open windows appear. */
+  readonly tree: TileNode<WinId> | null;
+  readonly shaded: Readonly<Partial<Record<WinId, boolean>>>;
+  readonly focus: WinId | null;
 }
 
-/**
- * Classic dock: main/tuner/queue stacked on the left like winamp's
- * main/eq/playlist tower, terminal + vis to the right.
- */
+const DEFAULT_TREE: TileNode<WinId> = split(
+  "row",
+  split("col", leaf("main"), split("col", leaf("tuner"), leaf("queue"), 0.42), 0.3),
+  split("col", leaf("terminal"), leaf("vis"), 0.62),
+  0.44,
+);
+
 const DEFAULT_WINDOWS: WindowsState = {
-  order: [
-    "todos",
-    "mcp",
-    "skinlab",
-    "museum",
-    "vis",
-    "terminal",
-    "queue",
-    "tuner",
-    "head",
-    "main",
-  ],
-  wins: {
-    // the classic-skin head unit: fixed 275x116 at 2x, chromeless
-    head: { x: 640, y: 40, w: 550, h: 232, open: false, shaded: false },
-    museum: { x: 540, y: 160, w: 470, h: 434, open: false, shaded: false },
-    main: { x: 16, y: 16, w: 550, h: 232, open: true, shaded: false },
-    tuner: { x: 16, y: 248, w: 550, h: 232, open: true, shaded: false },
-    queue: { x: 16, y: 480, w: 550, h: 318, open: true, shaded: false },
-    terminal: { x: 566, y: 16, w: 620, h: 464, open: true, shaded: false },
-    vis: { x: 566, y: 480, w: 620, h: 318, open: true, shaded: false },
-    todos: { x: 640, y: 80, w: 370, h: 302, open: false, shaded: false },
-    mcp: { x: 700, y: 140, w: 370, h: 220, open: false, shaded: false },
-    skinlab: { x: 760, y: 200, w: 370, h: 320, open: false, shaded: false },
-  },
+  tree: DEFAULT_TREE,
+  shaded: {},
+  focus: "main",
 };
+
+function isWinId(value: unknown): value is WinId {
+  return typeof value === "string" && (WIN_IDS as readonly string[]).includes(value);
+}
+
+/** structural validation: unknown ids or duplicates would corrupt the layout */
+function decodeTree(raw: unknown, seen: Set<WinId>): TileNode<WinId> | null {
+  if (typeof raw !== "object" || raw === null) {
+    return null;
+  }
+  const node = raw as Record<string, unknown>;
+  if (node["kind"] === "leaf") {
+    const id = node["id"];
+    if (!isWinId(id) || seen.has(id)) {
+      return null;
+    }
+    seen.add(id);
+    return leaf(id);
+  }
+  if (node["kind"] !== "split") {
+    return null;
+  }
+  const dir = node["dir"];
+  if (dir !== "row" && dir !== "col") {
+    return null;
+  }
+  const a = decodeTree(node["a"], seen);
+  const b = decodeTree(node["b"], seen);
+  if (a === null || b === null) {
+    return a ?? b; // a half-valid split collapses to whichever child survived
+  }
+  const ratio = typeof node["ratio"] === "number" ? node["ratio"] : 0.5;
+  return split(dir, a, b, ratio);
+}
 
 function decodeWindows(raw: unknown): WindowsState | null {
   if (typeof raw !== "object" || raw === null) {
     return null;
   }
-  const record = raw as { order?: unknown; wins?: unknown };
-  if (!Array.isArray(record.order) || typeof record.wins !== "object" || record.wins === null) {
-    return null;
-  }
-  const wins = { ...DEFAULT_WINDOWS.wins };
-  const rawWins = record.wins as Record<string, unknown>;
-  for (const id of WIN_IDS) {
-    const w = rawWins[id];
-    if (typeof w === "object" && w !== null) {
-      const candidate = w as Record<string, unknown>;
-      const def = DEFAULT_WINDOWS.wins[id];
-      wins[id] = {
-        x: typeof candidate["x"] === "number" ? candidate["x"] : def.x,
-        y: typeof candidate["y"] === "number" ? candidate["y"] : def.y,
-        w: typeof candidate["w"] === "number" ? candidate["w"] : def.w,
-        h: typeof candidate["h"] === "number" ? candidate["h"] : def.h,
-        open: typeof candidate["open"] === "boolean" ? candidate["open"] : def.open,
-        shaded: typeof candidate["shaded"] === "boolean" ? candidate["shaded"] : def.shaded,
-      };
+  const record = raw as Record<string, unknown>;
+  const shaded: Partial<Record<WinId, boolean>> = {};
+  const rawShaded = record["shaded"];
+  if (typeof rawShaded === "object" && rawShaded !== null) {
+    for (const [key, value] of Object.entries(rawShaded)) {
+      if (isWinId(key) && typeof value === "boolean") {
+        shaded[key] = value;
+      }
     }
   }
-  const order = record.order.filter((id): id is WinId =>
-    (WIN_IDS as readonly string[]).includes(String(id)),
-  );
-  for (const id of WIN_IDS) {
-    if (!order.includes(id)) {
-      order.push(id);
-    }
-  }
-  return { order, wins };
+  const focus = record["focus"];
+  return {
+    tree: decodeTree(record["tree"], new Set()),
+    shaded,
+    focus: isWinId(focus) ? focus : null,
+  };
 }
 
 export const windowsStore = new Store<WindowsState>(
-  loadPersisted("windows", decodeWindows) ?? DEFAULT_WINDOWS,
+  loadPersisted("windows.v2", decodeWindows) ?? DEFAULT_WINDOWS,
 );
 
 const persistWindows = debounced(() => {
-  savePersisted("windows", windowsStore.state);
+  savePersisted("windows.v2", windowsStore.state);
 }, 300);
 
 windowsStore.subscribe(persistWindows);
 
-export function getWin(state: WindowsState, id: WinId): WinState {
-  return state.wins[id];
+export function isOpen(state: WindowsState, id: WinId): boolean {
+  return state.tree !== null && leafIds(state.tree).includes(id);
 }
 
+export function openWindowIds(state: WindowsState): readonly WinId[] {
+  return state.tree === null ? [] : leafIds(state.tree);
+}
+
+/** per-axis intrinsic size: the head unit is fixed, shaded windows are short */
+export function intrinsicFor(state: WindowsState): (id: WinId) => Intrinsic {
+  return (id) => {
+    if (id === "head") {
+      return state.shaded[id] === true ? { w: HEAD_SIZE.w, h: SHADE_H } : HEAD_SIZE;
+    }
+    return state.shaded[id] === true ? { h: SHADE_H } : {};
+  };
+}
+
+export function computeLayout(state: WindowsState, frame: Rect): Layout<WinId> {
+  return layout(state.tree, frame, intrinsicFor(state));
+}
+
+const FALLBACK_FRAME: Rect = { x: 0, y: 0, w: 1440, h: 900 };
+
 export function focusWindow(id: WinId): void {
+  windowsStore.setState((s) => (s.focus === id ? s : { ...s, focus: id }));
+}
+
+export function setWindowOpen(id: WinId, open: boolean, frame?: Rect): void {
   windowsStore.setState((s) => {
-    if (s.order[s.order.length - 1] === id) {
+    if (open === isOpen(s, id)) {
       return s;
     }
-    return { ...s, order: [...s.order.filter((w) => w !== id), id] };
+    if (!open) {
+      return {
+        ...s,
+        tree: s.tree === null ? null : removeLeaf(s.tree, id),
+        focus: s.focus === id ? null : s.focus,
+      };
+    }
+    const rects = computeLayout(s, frame ?? FALLBACK_FRAME).rects;
+    return { ...s, tree: insertAtLargest(s.tree, id, rects), focus: id };
   });
 }
 
-export function setWindowOpen(id: WinId, open: boolean): void {
-  windowsStore.setState((s) => ({
-    ...s,
-    wins: { ...s.wins, [id]: { ...s.wins[id], open } },
-    order: open ? [...s.order.filter((w) => w !== id), id] : s.order,
-  }));
-}
-
-export function toggleWindow(id: WinId): void {
-  setWindowOpen(id, !windowsStore.state.wins[id].open);
-}
-
-export function moveWindow(id: WinId, x: number, y: number): void {
-  windowsStore.setState((s) => ({
-    ...s,
-    wins: { ...s.wins, [id]: { ...s.wins[id], x, y } },
-  }));
-}
-
-export function resizeWindow(id: WinId, w: number, h: number): void {
-  windowsStore.setState((s) => ({
-    ...s,
-    wins: { ...s.wins, [id]: { ...s.wins[id], w, h } },
-  }));
+export function toggleWindow(id: WinId, frame?: Rect): void {
+  setWindowOpen(id, !isOpen(windowsStore.state, id), frame);
 }
 
 export function toggleShade(id: WinId): void {
   windowsStore.setState((s) => ({
     ...s,
-    wins: { ...s.wins, [id]: { ...s.wins[id], shaded: !s.wins[id].shaded } },
+    shaded: { ...s.shaded, [id]: s.shaded[id] !== true },
   }));
+}
+
+export function setRatio(path: string, ratio: number): void {
+  windowsStore.setState((s) =>
+    s.tree === null ? s : { ...s, tree: setRatioAt(s.tree, path, ratio) },
+  );
+}
+
+/** commit a drag: swap in place, or re-home beside the target */
+export function dropWindow(dragId: WinId, targetId: WinId, zone: DropZone): void {
+  windowsStore.setState((s) =>
+    s.tree === null
+      ? s
+      : { ...s, tree: moveLeaf(s.tree, dragId, targetId, zone), focus: dragId },
+  );
+}
+
+/** commit a drag past the workspace edge */
+export function dropWindowAtEdge(dragId: WinId, side: Exclude<DropZone, "swap">): void {
+  windowsStore.setState((s) =>
+    s.tree === null ? s : { ...s, tree: attachToRoot(s.tree, dragId, side), focus: dragId },
+  );
+}
+
+/** Alt+Shift+arrow: swap the focused window with its visual neighbor */
+export function moveFocused(side: Exclude<DropZone, "swap">, frame: Rect): void {
+  const state = windowsStore.state;
+  const focus = state.focus;
+  if (state.tree === null || focus === null) {
+    return;
+  }
+  const neighbor = neighborOf(computeLayout(state, frame).rects, focus, side);
+  if (neighbor === null) {
+    return;
+  }
+  windowsStore.setState((s) =>
+    s.tree === null ? s : { ...s, tree: swapLeaves(s.tree, focus, neighbor) },
+  );
 }
 
 export function resetLayout(): void {

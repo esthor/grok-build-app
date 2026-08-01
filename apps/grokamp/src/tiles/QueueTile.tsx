@@ -8,12 +8,19 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
-import { addRandomTask, jumpTo } from "../agent/controller";
+import { jumpTo } from "../agent/controller";
 import type { TaskSpec } from "../agent/protocol";
 import { DEMO_TASKS } from "../agent/tasks";
-import { queueStore, removeTasks, restoreDemoQueue } from "../state/queue";
-import { sessionStore } from "../state/session";
+import {
+  isConsumed,
+  queueStore,
+  removeTasks,
+  restoreDemoQueue,
+  statusOf,
+  type TaskStatus,
+} from "../state/queue";
 import { LcdText, SquareBtn } from "../ui/controls";
+import { TaskComposer } from "./TaskComposer";
 
 /** pretend media-library scan; gives the playlist its dramatic entrance */
 async function scanLibrary(): Promise<readonly TaskSpec[]> {
@@ -23,10 +30,18 @@ async function scanLibrary(): Promise<readonly TaskSpec[]> {
   return DEMO_TASKS;
 }
 
+const STATUS_GLYPH: Readonly<Record<TaskStatus, string>> = {
+  queued: "",
+  running: "▶ ",
+  done: "✓ ",
+  stopped: "■ ",
+  failed: "✗ ",
+};
+
 export function QueueTile(): ReactNode {
   const queue = useStore(queueStore);
-  const status = useStore(sessionStore, (s) => s.status);
   const [selected, setSelected] = useState<readonly string[]>([]);
+  const [composing, setComposing] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const library = useQuery({ queryKey: ["task-library"], queryFn: scanLibrary });
@@ -48,13 +63,12 @@ export function QueueTile(): ReactNode {
     overscan: 12,
   });
 
+  const runnableCount = queue.items.filter((t) => !isConsumed(queue, t.id)).length;
   const totalTokens = queue.items.reduce((sum, t) => sum + t.estOutputTokens, 0);
 
   const onRowClick = (id: string, e: ReactMouseEvent): void => {
     if (e.metaKey || e.ctrlKey) {
-      setSelected((prev) =>
-        prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id],
-      );
+      setSelected((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
     } else {
       setSelected([id]);
     }
@@ -69,7 +83,7 @@ export function QueueTile(): ReactNode {
           </div>
         ) : queue.items.length === 0 ? (
           <div className="queue-empty">
-            <LcdText dim>queue empty — ADD or MISC→demo</LcdText>
+            <LcdText dim>queue empty — ADD a task or MISC for the demo set</LcdText>
           </div>
         ) : (
           <div
@@ -80,14 +94,16 @@ export function QueueTile(): ReactNode {
               if (task === undefined) {
                 return null;
               }
+              const state = statusOf(queue, task.id);
+              const consumed = state !== "queued";
               const isCurrent = task.id === queue.currentId;
-              const isSelected = selected.includes(task.id);
               return (
                 <div
                   key={task.id}
                   className="queue-row"
                   data-current={isCurrent ? "yes" : "no"}
-                  data-selected={isSelected ? "yes" : "no"}
+                  data-selected={selected.includes(task.id) ? "yes" : "no"}
+                  data-status={state}
                   style={{
                     position: "absolute",
                     top: 0,
@@ -102,10 +118,14 @@ export function QueueTile(): ReactNode {
                   onDoubleClick={() => {
                     jumpTo(task.id, true);
                   }}
-                  title={`${task.title} — double-click to run`}
+                  title={
+                    consumed
+                      ? `${task.title} — already ${state}; sessions run once`
+                      : `${task.title} [${task.repo}] — double-click to run`
+                  }
                 >
                   <span className="queue-row-title">
-                    {isCurrent ? (status === "running" || status === "blocked" ? "▶ " : "• ") : ""}
+                    {STATUS_GLYPH[state]}
                     {row.index + 1}. {task.title}
                   </span>
                   <span className="queue-row-len">
@@ -119,7 +139,12 @@ export function QueueTile(): ReactNode {
       </div>
       <div className="queue-footer">
         <div className="queue-btns">
-          <SquareBtn title="queue a new task" onClick={addRandomTask}>
+          <SquareBtn
+            title="compose a task (repo + prompt + /commands)"
+            onClick={() => {
+              setComposing(true);
+            }}
+          >
             ADD
           </SquareBtn>
           <SquareBtn
@@ -147,10 +172,17 @@ export function QueueTile(): ReactNode {
         </div>
         <span className="queue-total">
           <LcdText dim>
-            {queue.items.length} TASKS · {(totalTokens / 1000).toFixed(0)}K EST
+            {runnableCount}/{queue.items.length} READY · {(totalTokens / 1000).toFixed(0)}K EST
           </LcdText>
         </span>
       </div>
+      {composing && (
+        <TaskComposer
+          onClose={() => {
+            setComposing(false);
+          }}
+        />
+      )}
     </div>
   );
 }

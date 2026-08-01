@@ -69,30 +69,62 @@ async function gql(query: string, variables: Record<string, unknown>): Promise<u
 
 const NODE_FIELDS = "md5 filename nsfw download_url";
 
-/** free-text search (museum's Algolia via its GraphQL) */
-export async function searchMuseum(query: string, first = 30): Promise<MuseumSkin[]> {
+/** the museum loads 100 at a time; so do we */
+export const PAGE_SIZE = 100;
+
+export interface MuseumPage {
+  readonly skins: readonly MuseumSkin[];
+  /** total in the museum for this query, when the API reports it */
+  readonly total: number | null;
+  readonly nextOffset: number | null;
+}
+
+/**
+ * Free-text search across the whole archive. `search_skins` takes an offset,
+ * so search results paginate exactly like browsing does.
+ */
+export async function searchMuseum(query: string, offset = 0): Promise<MuseumPage> {
   const data = (await gql(
-    `query S($q: String!, $first: Int!) {
-       search_skins(query: $q, first: $first) {
+    `query S($q: String!, $first: Int!, $offset: Int!) {
+       search_skins(query: $q, first: $first, offset: $offset) {
          ... on ClassicSkin { ${NODE_FIELDS} }
        }
      }`,
-    { q: query, first },
+    { q: query, first: PAGE_SIZE, offset },
   )) as { data?: { search_skins?: unknown[] } };
-  return filterSafe(decodeNodes(data.data?.search_skins ?? []));
+  const raw = data.data?.search_skins ?? [];
+  return {
+    skins: filterSafe(decodeNodes(raw)),
+    total: null, // search doesn't report a count; we page until it runs dry
+    nextOffset: raw.length < PAGE_SIZE ? null : offset + PAGE_SIZE,
+  };
 }
 
-/** curated firehose: the museum's default ordering (approved classics first) */
-export async function browseMuseum(offset = 0, first = 30): Promise<MuseumSkin[]> {
+/**
+ * Browse in the museum's own order — `sort: MUSEUM` is the curated
+ * most-popular-first ordering the site itself uses (base-2.91 and the
+ * Classified classics lead). Offsets are stable, so infinite scroll walks
+ * all ~102k without repeats.
+ */
+export async function browseMuseum(offset = 0): Promise<MuseumPage> {
   const data = (await gql(
     `query B($first: Int!, $offset: Int!) {
-       skins(first: $first, offset: $offset) {
+       skins(first: $first, offset: $offset, sort: MUSEUM) {
+         count
          nodes { ... on ClassicSkin { ${NODE_FIELDS} } }
        }
      }`,
-    { first, offset },
-  )) as { data?: { skins?: { nodes?: unknown[] } } };
-  return filterSafe(decodeNodes(data.data?.skins?.nodes ?? []));
+    { first: PAGE_SIZE, offset },
+  )) as { data?: { skins?: { count?: unknown; nodes?: unknown[] } } };
+  const raw = data.data?.skins?.nodes ?? [];
+  const total = typeof data.data?.skins?.count === "number" ? data.data.skins.count : null;
+  const consumed = offset + raw.length;
+  return {
+    skins: filterSafe(decodeNodes(raw)),
+    total,
+    nextOffset:
+      raw.length < PAGE_SIZE || (total !== null && consumed >= total) ? null : consumed,
+  };
 }
 
 export async function downloadSkin(skin: MuseumSkin): Promise<Uint8Array> {

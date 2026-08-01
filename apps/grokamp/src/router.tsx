@@ -8,7 +8,13 @@ import {
 import { useEffect, type ReactNode } from "react";
 import { App } from "./App";
 import { findSkin, setSkin, settingsStore, updateSettings } from "./state/settings";
-import { setWindowOpen, WIN_IDS, windowsStore, type WinId } from "./state/windows";
+import {
+  openWindowIds,
+  setWindowOpen,
+  WIN_IDS,
+  windowsStore,
+  type WinId,
+} from "./state/windows";
 
 /**
  * The workspace is deep-linkable: ?skin=Terminal%20Amber&x2=1&wins=main,queue
@@ -73,7 +79,8 @@ function AppShell(): ReactNode {
       }
       handle = setTimeout(() => {
         const settings = settingsStore.state;
-        const wins = WIN_IDS.filter((id: WinId) => windowsStore.state.wins[id].open).join(",");
+        const open = new Set(openWindowIds(windowsStore.state));
+        const wins = WIN_IDS.filter((id: WinId) => open.has(id)).join(",");
         // x2 is always written so a shared URL can say "off" explicitly
         const next: { skin: string; x2: boolean; wins: string } = {
           skin: settings.skinName,
