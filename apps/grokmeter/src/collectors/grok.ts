@@ -44,15 +44,17 @@ async function readBytes(path: string, start: number, end: number): Promise<Uint
 }
 
 class Tail {
-  /** Set when the file shrank underneath us (rewind/rotation). The owner
-   * must rebuild any state folded from this file — the tail itself resumes
-   * per its mode, but counters folded before the truncation are stale. */
+  /** Set when the file shrank or was atomically replaced underneath us.
+   * The owner must rebuild any state folded from this file — the tail
+   * itself resumes per its mode, but counters folded before the reset are
+   * stale. */
   truncated = false;
 
   private readonly path: string;
   private readonly startAtEnd: boolean;
   private offset: number;
   private buf = new Uint8Array(0);
+  private fileId: string | null = null;
 
   constructor(path: string, startAtEnd: boolean) {
     this.path = path;
@@ -72,11 +74,23 @@ class Tail {
 
   private async pollInner(onLine: (line: string) => void): Promise<void> {
     let size: number;
+    let fileId: string;
     try {
-      size = (await stat(this.path)).size;
+      const st = await stat(this.path);
+      size = st.size;
+      fileId = `${st.dev}:${st.ino}`;
     } catch {
       return;
     }
+    // Atomic replacement detection: a rename swaps the inode, and the new
+    // file can be the same size or larger — the shrink check alone would
+    // read garbage from the middle of the replacement.
+    if (this.fileId !== null && fileId !== this.fileId && this.offset > 0) {
+      this.truncated = true;
+      this.offset = this.startAtEnd ? -1 : 0;
+      this.buf = new Uint8Array(0);
+    }
+    this.fileId = fileId;
     if (this.offset === -1) {
       // First contact: start 128 KB back so the deck has recent history,
       // probing forward to a line boundary so we never start mid-line.
@@ -119,15 +133,22 @@ class Tail {
       this.buf = joined;
 
       const decoder = new TextDecoder();
-      let start = 0;
-      let nl = this.buf.indexOf(NEWLINE, start);
+      let nl = this.buf.indexOf(NEWLINE);
       while (nl >= 0) {
-        const line = decoder.decode(this.buf.slice(start, nl)).trim();
-        if (line !== "") onLine(line);
-        start = nl + 1;
-        nl = this.buf.indexOf(NEWLINE, start);
+        // Trim the buffer BEFORE delivering: if the consumer throws, the
+        // line is already consumed and can't be replayed next poll.
+        const lineBytes = this.buf.slice(0, nl);
+        this.buf = this.buf.slice(nl + 1);
+        const line = decoder.decode(lineBytes).trim();
+        if (line !== "") {
+          try {
+            onLine(line);
+          } catch {
+            // A consumer error must not corrupt tail state.
+          }
+        }
+        nl = this.buf.indexOf(NEWLINE);
       }
-      this.buf = this.buf.slice(start);
     }
   }
 }
