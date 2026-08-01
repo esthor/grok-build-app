@@ -8,7 +8,7 @@ export const permissionsWidget: WidgetDef = {
   id: "permissions",
   label: "PERMISSIONS // GATE",
   col: 3,
-  order: 1,
+  order: 2,
   h: 140,
   mount({ store, body, setStatus }) {
     const grid = el("div", "stat-grid");

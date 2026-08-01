@@ -655,6 +655,35 @@ canvas.fill {
   display: block;
 }
 
+/* ── Fleet roster ────────────────────────────────────────────────────── */
+
+.fleet-row {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 10.5px;
+  padding: 3px 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 120ms ease;
+}
+
+.fleet-row:hover {
+  background: rgba(var(--accent-rgb), 0.06);
+}
+
+.fleet-row.focused {
+  border-color: rgba(var(--accent-rgb), 0.35);
+  background: rgba(var(--accent-rgb), 0.05);
+}
+
+.fleet-row.focused::before {
+  content: "▎";
+  color: var(--accent);
+  margin-right: -4px;
+}
+
 /* Decorative rotator rings (SVG circles). */
 @keyframes rot {
   to {

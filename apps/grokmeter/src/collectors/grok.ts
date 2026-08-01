@@ -11,6 +11,7 @@ import { join } from "node:path";
 import {
   HOME_FILES,
   SESSION_FILES,
+  SESSION_ID_RE,
   Tail,
   chunkText,
   decodeCwdDirname,
@@ -21,7 +22,6 @@ import {
   parseSignals,
   parseSummary,
   parseUpdateLine,
-  SESSION_ID_RE,
   sessionDir,
   sessionsRoot,
   summarizeRawInput,
@@ -29,9 +29,14 @@ import {
   type ActiveSessionEntry,
   type TailIo,
 } from "../../../../packages/grok-harness/src/index.ts";
-import type { AgentPhase, AgentSnapshot, CollectorEmit, FeedItem, ToolStats } from "../shared/protocol.ts";
+import type { AgentPhase, AgentSnapshot, CollectorEmit, FeedItem, FleetEntry, ToolStats } from "../shared/protocol.ts";
 
-type Emit = Pick<CollectorEmit, "agent" | "feed">;
+type Emit = Pick<CollectorEmit, "agent" | "feed" | "fleet">;
+
+export type GrokHandle = {
+  /** Focus a watched session by id (from a fleet row click). */
+  setFocus: (id: string) => void;
+};
 
 const home = (): string => grokHome(process.env, homedir(), join);
 
@@ -104,6 +109,19 @@ class SessionWatch {
   compactionCount = 0;
   itlP50 = 0;
   itlP99 = 0;
+
+  /** Recent feed items for this session, kept so focus switches can
+   * backfill. Each carries a monotonic sequence number: FeedItem.at can
+   * repeat (the envelope fallback is second-resolution), so timestamps
+   * can't identify "already streamed". */
+  readonly ring: RingEntry[] = [];
+  /** Next sequence number to assign to a ring entry. */
+  ringSeq = 0;
+  /** Highest sequence already streamed to the deck. */
+  lastStreamedSeq = 0;
+  /** Identity of the newest item streamed, so a rebuilt watch (whose
+   * sequences restart) can reconcile its replay against what was sent. */
+  lastDeliveredKey = "";
 
   readonly dir: string;
   readonly id: string;
@@ -377,6 +395,46 @@ function clip(text: string, max: number): string {
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
 
+const RING_CAP = 60;
+
+/** A ring item plus its per-session sequence number. */
+type RingEntry = { seq: number; item: FeedItem };
+
+/** Stable identity for a feed item, used to reconcile a rebuilt ring with
+ * what was already delivered (sequence numbers restart on rebuild). */
+export function feedKey(item: FeedItem): string {
+  return `${item.at}|${item.kind}|${item.tool ?? ""}|${item.ms ?? ""}|${item.text}`;
+}
+
+/**
+ * Decide what a rebuilt watch still owes the deck. `lastDeliveredKey` is the
+ * identity of the newest item already streamed; everything after it in the
+ * replayed ring is genuinely new. A ring that doesn't contain the key shares
+ * no history with what we delivered (true rotation), so all of it is new.
+ */
+export function reconcileBackfill(
+  ring: readonly RingEntry[],
+  lastDeliveredKey: string,
+): RingEntry[] {
+  if (lastDeliveredKey === "") return [...ring];
+  for (let i = ring.length - 1; i >= 0; i -= 1) {
+    const entry = ring[i];
+    if (entry !== undefined && feedKey(entry.item) === lastDeliveredKey) {
+      return ring.slice(i + 1);
+    }
+  }
+  return [...ring];
+}
+
+/** Append items to a watch's ring, stamping each with the next sequence. */
+function pushRing(w: SessionWatch, items: FeedItem[]): void {
+  for (const item of items) {
+    w.ringSeq += 1;
+    w.ring.push({ seq: w.ringSeq, item });
+  }
+  if (w.ring.length > RING_CAP) w.ring.splice(0, w.ring.length - RING_CAP);
+}
+
 // ── Discovery ────────────────────────────────────────────────────────────
 
 async function readActive(): Promise<ActiveSessionEntry[]> {
@@ -472,38 +530,85 @@ async function findRecentSession(): Promise<{ dir: string; id: string; cwd: stri
 
 // ── Public entry ─────────────────────────────────────────────────────────
 
-export function startGrok(emit: Emit): void {
-  let watch: SessionWatch | null = null;
-  let watchLive = false;
+const MAX_WATCHES = 8;
+
+/**
+ * Watch EVERY live session concurrently (capped at MAX_WATCHES, freshest
+ * event files win). All watchers fold state and keep a feed ring; only the
+ * focused session streams to the deck's agent widgets. Focus is sticky —
+ * it never auto-switches while the focused session stays watched, so two
+ * busy sessions can't make the deck flap.
+ */
+export function startGrok(emit: Emit): GrokHandle {
+  const watches = new Map<string, { watch: SessionWatch; live: boolean }>();
+  let focusedId: string | null = null;
+
+  const focused = (): { watch: SessionWatch; live: boolean } | null =>
+    focusedId !== null ? (watches.get(focusedId) ?? null) : null;
+
+  const emitFocus = (entry: { watch: SessionWatch; live: boolean }): void => {
+    const w = entry.watch;
+    // Backfill only items newer than what this session already streamed:
+    // refocusing must not re-inject old history as if it just happened.
+    const unseen = w.ring.filter((e) => e.seq > w.lastStreamedSeq).slice(-30);
+    const backfill = unseen.map((e) => e.item);
+    const newest = unseen[unseen.length - 1];
+    if (newest !== undefined) {
+      w.lastStreamedSeq = Math.max(w.lastStreamedSeq, newest.seq);
+      w.lastDeliveredKey = feedKey(newest.item);
+    }
+    emit.feed([
+      {
+        at: Date.now(),
+        kind: "phase",
+        text: `▶ focused ${w.id.slice(0, 8)} · ${w.cwd.split("/").pop() ?? w.cwd}`,
+      },
+      ...backfill,
+    ]);
+    emit.agent(w.snapshot(entry.live));
+  };
+
+  const emitFleet = (): void => {
+    const fleet: FleetEntry[] = [...watches.values()]
+      .map(({ watch: w, live }) => ({
+        id: w.id,
+        title: w.title,
+        cwd: w.cwd,
+        model: w.model,
+        phase: (w.permPending ? "permission_prompt" : w.phase) as AgentPhase,
+        live,
+        focused: w.id === focusedId,
+        permPending: w.permPending,
+        contextUsedTokens: w.contextUsedTokens,
+        contextWindowTokens: w.contextWindowTokens,
+        toolCallCount: Object.values(w.tools).reduce((a, t) => a + t.count, 0),
+        // Same rule as snapshot(): live sessions are being updated now; only
+        // disk-fallback rows report the recorded last-active time.
+        updatedAt: live ? Date.now() : w.updatedAt,
+      }))
+      .sort((a, b) => a.cwd.localeCompare(b.cwd) || a.id.localeCompare(b.id));
+    emit.fleet(fleet);
+  };
 
   const attach = async (dir: string, id: string, cwd: string, live: boolean): Promise<void> => {
     const fresh = new SessionWatch(dir, id, cwd);
     await fresh.refreshMeta();
-
-    // Replay the whole event log (and the recent updates window) to rebuild
-    // counters; surface only a short, time-ordered tail in the feed.
+    // Replay to rebuild counters; the tail lands in the ring, not the feed.
     const backfill: FeedItem[] = [];
     await fresh.events.poll((line) => fresh.foldEvent(line, backfill));
     await fresh.updates.poll((line) => fresh.foldUpdate(line, backfill));
     await fresh.hunks.poll((line) => fresh.foldHunk(line));
     backfill.sort((a, b) => a.at - b.at);
-    const recent = backfill.slice(-30);
-
-    watch = fresh;
-    watchLive = live;
-    emit.feed([
-      { at: Date.now(), kind: "phase", text: `▶ attached ${id.slice(0, 8)} · ${cwd.split("/").pop() ?? cwd}` },
-      ...recent,
-    ]);
-    emit.agent(fresh.snapshot(live));
+    pushRing(fresh, backfill);
+    watches.set(id, { watch: fresh, live });
   };
 
-  // Discovery loop: prefer a live session (freshest events file wins).
+  // Discovery: keep a watcher per live session; fall back to the most
+  // recently active on-disk session when nothing is running.
   const discover = async (): Promise<void> => {
     const active = (await readActive()).filter((a) => pidAlive(a.pid));
-    let target: { dir: string; id: string; cwd: string; live: boolean } | null = null;
+    const targets = new Map<string, { dir: string; cwd: string; live: boolean; mtime: number }>();
 
-    let bestMtime = -1;
     for (const a of active) {
       const dir = await findSessionDir(a.cwd, a.sessionId);
       if (dir === null) continue;
@@ -513,28 +618,48 @@ export function startGrok(emit: Emit): void {
       } catch {
         mtime = 0;
       }
-      if (mtime > bestMtime) {
-        bestMtime = mtime;
-        target = { dir, id: a.sessionId, cwd: a.cwd, live: true };
-      }
+      targets.set(a.sessionId, { dir, cwd: a.cwd, live: true, mtime });
     }
-    if (target === null) {
+    if (targets.size === 0) {
       const recent = await findRecentSession();
-      if (recent !== null) target = { ...recent, live: false };
+      if (recent !== null) targets.set(recent.id, { dir: recent.dir, cwd: recent.cwd, live: false, mtime: 0 });
     }
 
-    if (target === null) {
-      if (watch !== null) {
-        watch = null;
-        emit.agent(null);
+    // Cap by activity.
+    const keep = new Set(
+      [...targets.entries()]
+        .sort((a, b) => b[1].mtime - a[1].mtime)
+        .slice(0, MAX_WATCHES)
+        .map(([id]) => id),
+    );
+
+    for (const id of [...watches.keys()]) {
+      if (!keep.has(id)) watches.delete(id);
+    }
+    for (const id of keep) {
+      const t = targets.get(id);
+      if (t === undefined) continue;
+      const existing = watches.get(id);
+      if (existing === undefined) {
+        await attach(t.dir, id, t.cwd, t.live);
+      } else {
+        existing.live = t.live;
       }
-      return;
     }
-    if (watch === null || watch.id !== target.id) {
-      await attach(target.dir, target.id, target.cwd, target.live);
-    } else {
-      watchLive = target.live;
+
+    // Sticky focus: only (re)pick when the focused session vanished.
+    if (focusedId === null || !watches.has(focusedId)) {
+      const preferred =
+        [...targets.entries()]
+          .filter(([id]) => watches.has(id))
+          .sort((a, b) => Number(b[1].live) - Number(a[1].live) || b[1].mtime - a[1].mtime)
+          .map(([id]) => id)[0] ?? null;
+      focusedId = preferred;
+      const entry = focused();
+      if (entry !== null) emitFocus(entry);
+      else emit.agent(null);
     }
+    emitFleet();
   };
 
   // Both loop bodies are async on fixed timers: an in-flight latch keeps a
@@ -555,30 +680,56 @@ export function startGrok(emit: Emit): void {
   discoverOnce();
   setInterval(discoverOnce, 2000);
 
-  // Tail + snapshot loop.
+  // Tail loop: poll every watcher; stream only the focused one.
   let tailing = false;
   setInterval(() => {
-    const w = watch;
-    if (w === null || tailing) return;
+    if (tailing) return;
     tailing = true;
     void (async () => {
-      const fresh: FeedItem[] = [];
-      await w.updates.poll((line) => w.foldUpdate(line, fresh));
-      await w.events.poll((line) => w.foldEvent(line, fresh));
-      await w.hunks.poll((line) => w.foldHunk(line));
-      if (watch !== w) return; // session switched mid-poll; drop stale output
-      if (w.events.truncated || w.updates.truncated || w.hunks.truncated) {
-        // A source file shrank (rewind/rotation): counters folded from it
-        // are stale, so rebuild the watch instead of folding a replay into
-        // already-populated state.
-        await attach(w.dir, w.id, w.cwd, watchLive);
-        return;
-      }
-      if (fresh.length > 0) {
+      for (const entry of watches.values()) {
+        const w = entry.watch;
+        const fresh: FeedItem[] = [];
+        await w.updates.poll((line) => w.foldUpdate(line, fresh));
+        await w.events.poll((line) => w.foldEvent(line, fresh));
+        await w.hunks.poll((line) => w.foldHunk(line));
+        if (w.events.truncated || w.updates.truncated || w.hunks.truncated) {
+          // A source file shrank (rewind/rotation): counters folded from it
+          // are stale, so rebuild this watch instead of folding a replay
+          // into already-populated state.
+          watches.delete(w.id);
+          await attach(w.dir, w.id, w.cwd, entry.live);
+          const rebuilt = watches.get(w.id);
+          if (rebuilt !== undefined) {
+            // Carry the stream cursor across the replacement: the rebuilt
+            // watch replays history into its ring, and without the cursor
+            // a focused rebuild would re-emit items the deck already has.
+            // Sequences restart on rebuild, so reconcile by identity: mark
+            // everything up to the last delivered item as streamed and let
+            // emitFocus send only records the replacement file added after
+            // it (a rotation with no shared history counts as all-new).
+            const rebuiltWatch = rebuilt.watch;
+            rebuiltWatch.lastDeliveredKey = w.lastDeliveredKey;
+            const owed = reconcileBackfill(rebuiltWatch.ring, w.lastDeliveredKey);
+            const firstOwed = owed[0];
+            rebuiltWatch.lastStreamedSeq =
+              firstOwed !== undefined ? firstOwed.seq - 1 : rebuiltWatch.ringSeq;
+            if (w.id === focusedId) emitFocus(rebuilt);
+          }
+          continue;
+        }
+        if (fresh.length === 0) continue;
         fresh.sort((a, b) => a.at - b.at);
-        emit.feed(fresh);
+        pushRing(w, fresh);
+        if (w.id === focusedId) {
+          w.lastStreamedSeq = w.ringSeq;
+          const newest = fresh[fresh.length - 1];
+          if (newest !== undefined) w.lastDeliveredKey = feedKey(newest);
+          emit.feed(fresh);
+        }
       }
-      emit.agent(w.snapshot(watchLive));
+      const entry = focused();
+      if (entry !== null) emit.agent(entry.watch.snapshot(entry.live));
+      emitFleet();
     })()
       .catch(() => {
         // Skip the tick on a transient FS race; never surface an unhandled
@@ -591,7 +742,16 @@ export function startGrok(emit: Emit): void {
 
   // Meta refresh (summary/signals are small atomic files).
   setInterval(() => {
-    const w = watch;
-    if (w !== null) void w.refreshMeta().catch(() => {});
+    for (const { watch } of watches.values()) void watch.refreshMeta().catch(() => {});
   }, 3000);
+
+  return {
+    setFocus: (id: string): void => {
+      const entry = watches.get(id);
+      if (entry === undefined || id === focusedId) return;
+      focusedId = id;
+      emitFocus(entry);
+      emitFleet();
+    },
+  };
 }

@@ -5,6 +5,7 @@
 import type {
   AgentSnapshot,
   FeedItem,
+  FleetEntry,
   MediaState,
   ServerInfo,
   SysStats,
@@ -18,6 +19,7 @@ export type StoreEvents = {
   media: MediaState | null;
   hello: ServerInfo;
   link: boolean;
+  fleet: FleetEntry[];
   /** Fired when replayable feed state is dropped (reconnect); every feed
    * consumer must clear what it derived from the ring. */
   feedReset: void;
@@ -33,7 +35,10 @@ export class Store {
   media: MediaState | null = null;
   info: ServerInfo | null = null;
   linked = false;
+  fleet: FleetEntry[] = [];
   readonly feed: FeedItem[] = [];
+  /** Wired by main() to the WebSocket; widgets use it to request focus. */
+  requestFocus: (id: string) => void = () => {};
 
   private handlers: { [K in keyof StoreEvents]: Set<Handler<StoreEvents[K]>> } = {
     sys: new Set(),
@@ -42,6 +47,7 @@ export class Store {
     media: new Set(),
     hello: new Set(),
     link: new Set(),
+    fleet: new Set(),
     feedReset: new Set(),
   };
 
@@ -87,6 +93,10 @@ export class Store {
         this.feed.push(...msg.items);
         if (this.feed.length > FEED_CAP) this.feed.splice(0, this.feed.length - FEED_CAP);
         this.emit("feed", msg.items);
+        break;
+      case "fleet":
+        this.fleet = msg.fleet;
+        this.emit("fleet", msg.fleet);
         break;
       default: {
         const never: never = msg;

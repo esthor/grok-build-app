@@ -150,6 +150,22 @@ export type ServerInfo = {
   startedAt: number;
 };
 
+/** One row of the multi-session roster. */
+export type FleetEntry = {
+  id: string;
+  title: string;
+  cwd: string;
+  model: string;
+  phase: AgentPhase;
+  live: boolean;
+  focused: boolean;
+  permPending: boolean;
+  contextUsedTokens: number;
+  contextWindowTokens: number;
+  toolCallCount: number;
+  updatedAt: number;
+};
+
 /** What a collector ("measure") can publish — one shape shared by the demo
  * generator and every live collector so they stay interchangeable. */
 export type CollectorEmit = {
@@ -157,6 +173,7 @@ export type CollectorEmit = {
   agent: (agent: AgentSnapshot | null) => void;
   media: (media: MediaState | null) => void;
   feed: (items: FeedItem[]) => void;
+  fleet: (fleet: FleetEntry[]) => void;
 };
 
 /** Server → client messages. */
@@ -165,7 +182,27 @@ export type Wire =
   | { t: "sys"; sys: SysStats }
   | { t: "agent"; agent: AgentSnapshot | null }
   | { t: "feed"; items: FeedItem[] }
-  | { t: "media"; media: MediaState | null };
+  | { t: "media"; media: MediaState | null }
+  | { t: "fleet"; fleet: FleetEntry[] };
+
+/** Client → server messages. */
+export type ClientWire = { t: "focus"; id: string };
+
+export function encodeClientWire(msg: ClientWire): string {
+  return JSON.stringify(msg);
+}
+
+export function decodeClientWire(raw: string): ClientWire | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    const o = parsed as Record<string, unknown>;
+    if (o["t"] !== "focus" || typeof o["id"] !== "string" || o["id"].length > 128) return null;
+    return { t: "focus", id: o["id"] };
+  } catch {
+    return null;
+  }
+}
 
 export function encodeWire(msg: Wire): string {
   return JSON.stringify(msg);
@@ -197,6 +234,10 @@ export function decodeWire(raw: string): Wire | null {
         return isObj(parsed["media"]) || parsed["media"] === null ? (parsed as Wire) : null;
       case "feed":
         return Array.isArray(parsed["items"]) && parsed["items"].every(isObj)
+          ? (parsed as Wire)
+          : null;
+      case "fleet":
+        return Array.isArray(parsed["fleet"]) && parsed["fleet"].every(isObj)
           ? (parsed as Wire)
           : null;
       default:
