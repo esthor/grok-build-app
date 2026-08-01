@@ -415,11 +415,26 @@ class SessionWatch {
     if (str(rec["authorType"]) !== "agent") return;
     const id = str(rec["hunkId"]);
     if (id === "") return;
-    this.hunkTotals.set(id, {
+    const next = {
       add: num(rec["linesAdded"]),
       rem: num(rec["linesRemoved"]),
       file: str(rec["filePath"]),
-    });
+    };
+    // Records repeat per hunkId as an edit evolves: retract the previous
+    // contribution before applying the new one, so the running aggregates
+    // stay equal to a full re-sum of hunkTotals.
+    const prev = this.hunkTotals.get(id);
+    if (prev !== undefined) {
+      this.hunkAdded -= prev.add;
+      this.hunkRemoved -= prev.rem;
+      const n = (this.hunkFiles.get(prev.file) ?? 1) - 1;
+      if (n <= 0) this.hunkFiles.delete(prev.file);
+      else this.hunkFiles.set(prev.file, n);
+    }
+    this.hunkTotals.set(id, next);
+    this.hunkAdded += next.add;
+    this.hunkRemoved += next.rem;
+    this.hunkFiles.set(next.file, (this.hunkFiles.get(next.file) ?? 0) + 1);
   }
 
   snapshot(live: boolean): AgentSnapshot {
