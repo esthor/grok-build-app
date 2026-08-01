@@ -123,6 +123,19 @@ export type SessionSignals = {
   raw: JObj;
 };
 
+/**
+ * A line-count delta: a safe integer, 0 valid, SIGN ALLOWED.
+ *
+ * Not non-negative: grok writes signed deltas here. `eventType: "removed"`
+ * records carry a negative `linesAdded` with a `removalReason` (e.g.
+ * "superseded"), and `"updated"` records can too. Verified against 245
+ * real records — 117 of them are negative, so a non-negative guard would
+ * silently discard half the churn data.
+ */
+function isLineDelta(v: unknown): v is number {
+  return typeof v === "number" && Number.isSafeInteger(v);
+}
+
 function numOrNull(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
@@ -173,8 +186,10 @@ export function parseHunkLine(line: string): HunkRecord | null {
   if (hunkId === "") return null;
   // Line counts are the payload of this record: `num()` would coerce an
   // omitted field to 0, and a malformed repeat would then retract a valid
-  // contribution and replace it with zeros. Explicit 0 stays valid.
-  if (typeof o["linesAdded"] !== "number" || typeof o["linesRemoved"] !== "number") return null;
+  // contribution and replace it with zeros. Fractional/NaN/Infinity values
+  // would corrupt attribution totals; negatives are legitimate (see
+  // isLineDelta). Explicit 0 stays valid.
+  if (!isLineDelta(o["linesAdded"]) || !isLineDelta(o["linesRemoved"])) return null;
   if (str(o["filePath"]) === "") return null;
   return {
     hunkId,
