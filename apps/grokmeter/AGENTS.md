@@ -10,6 +10,8 @@ fullstack server. All commands run from `apps/grokmeter/`:
   no parameter properties — sources must stay Bun-strippable).
 - `bun run dev` (live, tails `~/.grok`) / `bun run demo` (scripted data),
   port 4517 or `PORT`.
+- `bun test` — unit regressions for pure logic (feed reconciliation);
+  `bun run check` runs it after the typechecks.
 
 Contracts to preserve:
 

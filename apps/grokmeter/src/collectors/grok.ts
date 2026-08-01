@@ -119,6 +119,9 @@ class SessionWatch {
   ringSeq = 0;
   /** Highest sequence already streamed to the deck. */
   lastStreamedSeq = 0;
+  /** Identity of the newest item streamed, so a rebuilt watch (whose
+   * sequences restart) can reconcile its replay against what was sent. */
+  lastDeliveredKey = "";
 
   readonly dir: string;
   readonly id: string;
@@ -397,6 +400,32 @@ const RING_CAP = 60;
 /** A ring item plus its per-session sequence number. */
 type RingEntry = { seq: number; item: FeedItem };
 
+/** Stable identity for a feed item, used to reconcile a rebuilt ring with
+ * what was already delivered (sequence numbers restart on rebuild). */
+export function feedKey(item: FeedItem): string {
+  return `${item.at}|${item.kind}|${item.tool ?? ""}|${item.ms ?? ""}|${item.text}`;
+}
+
+/**
+ * Decide what a rebuilt watch still owes the deck. `lastDeliveredKey` is the
+ * identity of the newest item already streamed; everything after it in the
+ * replayed ring is genuinely new. A ring that doesn't contain the key shares
+ * no history with what we delivered (true rotation), so all of it is new.
+ */
+export function reconcileBackfill(
+  ring: readonly RingEntry[],
+  lastDeliveredKey: string,
+): RingEntry[] {
+  if (lastDeliveredKey === "") return [...ring];
+  for (let i = ring.length - 1; i >= 0; i -= 1) {
+    const entry = ring[i];
+    if (entry !== undefined && feedKey(entry.item) === lastDeliveredKey) {
+      return ring.slice(i + 1);
+    }
+  }
+  return [...ring];
+}
+
 /** Append items to a watch's ring, stamping each with the next sequence. */
 function pushRing(w: SessionWatch, items: FeedItem[]): void {
   for (const item of items) {
@@ -524,7 +553,10 @@ export function startGrok(emit: Emit): GrokHandle {
     const unseen = w.ring.filter((e) => e.seq > w.lastStreamedSeq).slice(-30);
     const backfill = unseen.map((e) => e.item);
     const newest = unseen[unseen.length - 1];
-    if (newest !== undefined) w.lastStreamedSeq = Math.max(w.lastStreamedSeq, newest.seq);
+    if (newest !== undefined) {
+      w.lastStreamedSeq = Math.max(w.lastStreamedSeq, newest.seq);
+      w.lastDeliveredKey = feedKey(newest.item);
+    }
     emit.feed([
       {
         at: Date.now(),
@@ -671,9 +703,16 @@ export function startGrok(emit: Emit): GrokHandle {
             // Carry the stream cursor across the replacement: the rebuilt
             // watch replays history into its ring, and without the cursor
             // a focused rebuild would re-emit items the deck already has.
-            // The rebuilt watch re-stamps its replayed ring from seq 1, so
-            // carry the count already streamed, not the old seq value.
-            rebuilt.watch.lastStreamedSeq = rebuilt.watch.ringSeq;
+            // Sequences restart on rebuild, so reconcile by identity: mark
+            // everything up to the last delivered item as streamed and let
+            // emitFocus send only records the replacement file added after
+            // it (a rotation with no shared history counts as all-new).
+            const rebuiltWatch = rebuilt.watch;
+            rebuiltWatch.lastDeliveredKey = w.lastDeliveredKey;
+            const owed = reconcileBackfill(rebuiltWatch.ring, w.lastDeliveredKey);
+            const firstOwed = owed[0];
+            rebuiltWatch.lastStreamedSeq =
+              firstOwed !== undefined ? firstOwed.seq - 1 : rebuiltWatch.ringSeq;
             if (w.id === focusedId) emitFocus(rebuilt);
           }
           continue;
@@ -683,6 +722,8 @@ export function startGrok(emit: Emit): GrokHandle {
         pushRing(w, fresh);
         if (w.id === focusedId) {
           w.lastStreamedSeq = w.ringSeq;
+          const newest = fresh[fresh.length - 1];
+          if (newest !== undefined) w.lastDeliveredKey = feedKey(newest);
           emit.feed(fresh);
         }
       }
