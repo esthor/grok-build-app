@@ -1,0 +1,9 @@
+{
+  // Server side: Bun runtime types, no DOM.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "types": ["bun"]
+  },
+  "include": ["src/server.ts", "src/collectors/**/*.ts", "src/shared/**/*.ts"]
+}

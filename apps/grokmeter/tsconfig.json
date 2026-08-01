@@ -1,0 +1,10 @@
+{
+  // Editor entry point — real checking happens per-environment:
+  //   bun run check  →  tsc -p tsconfig.server.json && tsc -p tsconfig.web.json
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "types": ["bun"]
+  },
+  "include": ["src/**/*.ts"]
+}
