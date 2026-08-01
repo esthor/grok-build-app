@@ -171,6 +171,11 @@ export function parseHunkLine(line: string): HunkRecord | null {
   if (o === null) return null;
   const hunkId = str(o["hunkId"]);
   if (hunkId === "") return null;
+  // Line counts are the payload of this record: `num()` would coerce an
+  // omitted field to 0, and a malformed repeat would then retract a valid
+  // contribution and replace it with zeros. Explicit 0 stays valid.
+  if (typeof o["linesAdded"] !== "number" || typeof o["linesRemoved"] !== "number") return null;
+  if (str(o["filePath"]) === "") return null;
   return {
     hunkId,
     filePath: str(o["filePath"]),
