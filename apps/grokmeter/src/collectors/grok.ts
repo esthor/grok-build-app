@@ -654,9 +654,13 @@ export function startGrok(emit: Emit): GrokHandle {
           // into already-populated state.
           watches.delete(w.id);
           await attach(w.dir, w.id, w.cwd, entry.live);
-          if (w.id === focusedId) {
-            const rebuilt = watches.get(w.id);
-            if (rebuilt !== undefined) emitFocus(rebuilt);
+          const rebuilt = watches.get(w.id);
+          if (rebuilt !== undefined) {
+            // Carry the stream cursor across the replacement: the rebuilt
+            // watch replays history into its ring, and without the cursor
+            // a focused rebuild would re-emit items the deck already has.
+            rebuilt.watch.lastStreamedAt = w.lastStreamedAt;
+            if (w.id === focusedId) emitFocus(rebuilt);
           }
           continue;
         }
