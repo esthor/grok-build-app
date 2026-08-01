@@ -225,7 +225,11 @@ export class Spark {
     this.ring.reset();
     const c = this.canvas;
     const ctx = c.getContext("2d");
-    if (ctx !== null) ctx.clearRect(0, 0, c.width, c.height);
+    if (ctx === null) return;
+    // draw() leaves a DPR scale on the context; clearing in backing-store
+    // coordinates requires the identity transform.
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, c.width, c.height);
   }
 
   /** Draw with a CSS color; scales to max of the window (min floor avoids flatlines). */
