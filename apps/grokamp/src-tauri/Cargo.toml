@@ -1,0 +1,23 @@
+# Grokamp desktop shell (Tauri v2).
+# The empty [workspace] table detaches this crate from the repo's generated
+# root workspace — do not remove it.
+
+[package]
+name = "grokamp"
+version = "0.1.0"
+description = "Winamp-grade frontend for grok-build"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

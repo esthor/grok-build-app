@@ -1,0 +1,143 @@
+# SKINNING.md — make a Grokamp skin in five minutes
+
+Winamp skins were a zip of bitmaps you repainted in MS Paint. Grokamp skins
+are **one JSON file you can retype in any editor**. Same contract, same
+spirit:
+
+- **No code, no build step.** Drop the file in, the whole app rewears itself.
+- **Graceful fallback.** Only `name` + the 25 colors are required; everything
+  else is synthesized (Winamp let you ship a skin containing just
+  `main.bmp`).
+- **The vis palette is honored like `viscolor.txt`** — 24 slots, same
+  meanings, 28 years later.
+
+## Fastest path: the Skin Lab
+
+Open the **LAB** window (button on the main deck, or `Alt+8`):
+
+1. Pick any installed skin as a starting point.
+2. Click color swatches until it's yours. Name it.
+3. **APPLY** — it's live and persisted.
+4. **EXPORT** — downloads `your-skin.grokskin.json` to share.
+5. **IMPORT** — load anyone else's. **RANDOM** — roll the dice.
+
+## The format
+
+```jsonc
+{
+  "name": "Night Drive",           // required, unique-ish
+  "author": "you",                 // optional
+  "comment": "neon autobahn",      // optional
+  "colors": {                      // all 25 required, hex only
+    "desktop":      "#0b0f1c",     // app background
+    "chrome":       "#1c2438",     // window face
+    "chromeDeep":   "#111726",     // recessed panels
+    "edgeLight":    "#3d4d78",     // bevel highlight
+    "edgeDark":     "#05070d",     // bevel shadow
+    "titleA":       "#7a1fa2",     // titlebar gradient edges
+    "titleB":       "#ff2079",     // titlebar gradient center
+    "titleText":    "#ffe9ff",
+    "titleTextDim": "#8a7f9e",     // unfocused windows
+    "lcdBg":        "#04020a",     // readout panels
+    "lcdText":      "#ff9e00",     // primary LCD glow
+    "lcdDim":       "#7a4c00",     // unlit segments, quiet text
+    "lcdAccent":    "#ffe08a",     // highlights, tool lines
+    "btnFace":      "#26304a",
+    "btnText":      "#dfe6ff",
+    "sliderTrack":  "#0a0d18",
+    "sliderThumb":  "#5a6ea6",
+    "listBg":       "#04020a",     // task queue background
+    "listText":     "#ff9e00",     //  → pledit.txt "Normal"
+    "listCurrent":  "#ffffff",     //  → pledit.txt "Current"
+    "listSelBg":    "#33205a",     //  → pledit.txt "SelectedBG"
+    "ok":           "#3ddc84",
+    "warn":         "#ffbf00",
+    "err":          "#ff4136",
+    "ledOff":       "#1a2032"
+  },
+  "vis": ["#04020a", "#141020", "..."],  // optional; exactly 24 if present
+  "scanlines": true,                      // optional CRT overlay on LCDs
+  "radius": 0                             // window corners, px (0 = 1997)
+}
+```
+
+### The `vis` palette (viscolor.txt lives on)
+
+| slots | meaning |
+|---|---|
+| 0 | visualizer background |
+| 1 | the dotted grid |
+| 2–17 | spectrum bar ramp, **top → bottom** (classic ran red→yellow→green) |
+| 18–22 | oscilloscope shades |
+| 23 | peak caps |
+
+Omit `vis` entirely and Grokamp synthesizes one from your LCD colors — the
+same "missing file falls back" contract that made partial Winamp skins valid.
+If you do ship one, ship all 24 slots: `viscolor.txt` was exactly 24 lines,
+and so are we.
+
+### Validation
+
+Imports run through a strict parser
+([`src/skins/runtime.ts`](../src/skins/runtime.ts) — `parseSkin`): every
+color must be opaque `#rgb`/`#rrggbb` (no alpha), `radius` 0–16, `vis`
+exactly 24 hex entries or absent. Rejections land in the Terminal with the
+reason. Skins are **data,
+never code** — nothing in a skin file can execute.
+
+### Where skins live
+
+Built-ins ship in [`src/skins/builtins.ts`](../src/skins/builtins.ts) — each
+is ~40 lines of data; copy one and PR it. Imported/custom skins persist in
+`localStorage` and shadow nothing (a name collision with a builtin gets
+` MOD` appended). An example to import right now:
+[`examples/night-drive.grokskin.json`](./examples/night-drive.grokskin.json).
+
+## Wearing real classic .wsz files
+
+The Skin Lab's **WEAR .WSZ** button accepts an actual classic Winamp skin (a
+renamed zip of BMP sprite sheets). Grokamp ships **no Winamp artwork** — you
+supply the file, and everything is processed client-side:
+
+- A chromeless **HEAD UNIT** window (Alt+9) opens: a real 275×116 classic
+  main window at 2×, blitting the file's own sprites at the documented
+  classic coordinates — titlebar, clutterbar, 9×13 LED time, the 5×6
+  bitmap-font ticker, tok/s in the kbps slot, the 76×16 visualizer painted
+  with the skin's exact `viscolor.txt` ramp, working transport, shuffle/
+  repeat, EQ/PL toggles, volume ⟷ THR and balance ⟷ RISK. Pixel fidelity is
+  structural: whatever art is in your file is what renders.
+- A full Grokamp palette is **derived** (exact `viscolor`/`pledit` values +
+  sampled chrome medians) so every other window re-wears to match.
+- Skins ≤1.5 MB persist across reloads; **EJECT** takes it off.
+
+**The Skin Museum is built in**: the Skin Lab's **MUSEUM** button opens a
+browser for skins.webamp.org's 100k+ archived classic skins — search, hit
+WEAR, done. Skins stream on demand from the museum's public API to your
+browser and are never bundled with Grokamp (NSFW-flagged entries are
+filtered). Each result links back to its museum page. `.wal` files are the
+Winamp3+ *modern* format (freeform XML + MAKI bytecode) — a different
+engine, not supported; classic `.wsz` only.
+
+Custom skins (derived, imported, or hand-rolled) can be removed with the
+Skin Lab's **DEL** button — deleting a skin that shadowed a builtin brings
+the builtin back; builtins themselves are forever.
+
+Try it instantly with **DEMO**, which wears
+[`examples/grokamp-classic.wsz`](./examples/grokamp-classic.wsz) — original
+art generated by [`scripts/make-demo-wsz.ts`](../scripts/make-demo-wsz.ts)
+(run `bun run make:demo-wsz` to rebuild it). Classic skins you own can be
+found in your attic or at the Winamp Skin Museum (skins.webamp.org).
+
+Format quirks honored, per the research in [WINAMP.md](./WINAMP.md): entry
+names match case-insensitively across directories, duplicate zip entries
+last-one-wins, missing sheets simply don't render, `viscolor.txt` parses
+leniently, `pledit.txt` colors get `#`-normalized.
+
+### Design notes from the factory floor
+
+- Contrast is a feature: `lcdText` on `lcdBg` should hurt slightly.
+- `edgeLight`/`edgeDark` do all the 3D work — keep them believably lit from
+  the top-left.
+- `titleA→titleB→titleA` paints the gradient; put the loud color in `titleB`.
+- Light skins are legal (see **Bubblegum Crash**) — flip the edges.
+- Set `scanlines: true` when your skin dreams of phosphor.
